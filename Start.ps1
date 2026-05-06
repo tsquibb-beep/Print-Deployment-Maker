@@ -10,4 +10,4 @@ $_ver = Join-Path $PSScriptRoot 'version.txt'
 $appVersion = if (Test-Path $_ver) { (Get-Content $_ver -Raw).Trim() } else { '' }
 
 . (Join-Path $PSScriptRoot 'src\UI\MainWindow.ps1')
-Show-MainWindow -AppVersion $appVersion
+Show-MainWindow -AppVersion $appVersion -ScriptRoot $PSScriptRoot
