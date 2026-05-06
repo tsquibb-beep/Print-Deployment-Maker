@@ -10,8 +10,8 @@ $Script:MainXaml = @'
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Print Deployment Maker"
-    Width="840" Height="870"
-    MinWidth="700" MinHeight="760"
+    Width="840" Height="760"
+    MinWidth="700" MinHeight="600"
     WindowStartupLocation="CenterScreen"
     FontFamily="Segoe UI" FontSize="13"
     Background="{DynamicResource BrushWinBg}">
@@ -291,123 +291,138 @@ $Script:MainXaml = @'
             </Grid>
         </Border>
 
-        <!-- ══ Main area: shared form (top) + tab strip (bottom) ══ -->
+        <!-- ══ Main area: shared form (scrollable, top) + tab strip (pinned, bottom) ══ -->
         <Grid Grid.Row="1">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>   <!-- shared form (sized to content) -->
-                <RowDefinition Height="*"/>      <!-- tab control fills remainder -->
+                <RowDefinition Height="*"/>      <!-- shared form (scrollable, fills space) -->
+                <RowDefinition Height="Auto"/>   <!-- tab control (sized to content) -->
             </Grid.RowDefinitions>
 
             <!-- ── Shared form ── -->
-            <StackPanel Grid.Row="0" Margin="12,10,12,4">
+            <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="12,10,12,4">
 
-                <!-- Deployment -->
-                <GroupBox Header="Deployment" Margin="0,0,0,10">
-                    <Grid Margin="4,6,4,4">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="4"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="Deployment Name" FontSize="11"
-                                   Foreground="{DynamicResource BrushTextMuted}"/>
-                        <TextBox x:Name="DeploymentNameBox" Grid.Row="2"/>
-                    </Grid>
-                </GroupBox>
+                    <!-- Deployment -->
+                    <GroupBox Header="Deployment" Margin="0,0,0,10">
+                        <Grid Margin="4,6,4,4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="4"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="Deployment Name" FontSize="11"
+                                       Foreground="{DynamicResource BrushTextMuted}"/>
+                            <TextBox x:Name="DeploymentNameBox" Grid.Row="2"/>
+                        </Grid>
+                    </GroupBox>
 
-                <!-- Driver -->
-                <GroupBox Header="Driver" Margin="0,0,0,10">
-                    <Grid Margin="4,6,4,4">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="8"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="4"/>
-                            <RowDefinition Height="90"/>
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-
-                        <TextBox x:Name="InfPathBox" Grid.Row="0" Grid.Column="0"
-                                 IsReadOnly="True" Text="No .inf file selected"
-                                 Foreground="{DynamicResource BrushTextFaint}"/>
-                        <Button x:Name="BrowseInfBtn" Grid.Row="0" Grid.Column="1"
-                                Content="Browse .inf…" Margin="8,0,0,0"/>
-
-                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2"
-                                   Text="Driver Model" FontSize="11"
-                                   Foreground="{DynamicResource BrushTextMuted}"/>
-                        <ListBox x:Name="DriverModelList" Grid.Row="4" Grid.ColumnSpan="2"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"/>
-                    </Grid>
-                </GroupBox>
-
-                <!-- Print Queues -->
-                <GroupBox Header="Print Queues" Margin="0,0,0,4">
-                    <Grid Margin="4,6,4,4">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="4"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="6"/>
-                            <RowDefinition Height="90"/>
-                            <RowDefinition Height="6"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-
-                        <!-- Column labels -->
-                        <Grid Grid.Row="0">
+                    <!-- Driver -->
+                    <GroupBox Header="Driver" Margin="0,0,0,10">
+                        <Grid Margin="4,6,4,4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="8"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="4"/>
+                                <RowDefinition Height="90"/>
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="160"/>
-                                <ColumnDefinition Width="8"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Printer Name" FontSize="11"
+
+                            <TextBox x:Name="InfPathBox" Grid.Row="0" Grid.Column="0"
+                                     IsReadOnly="True" Text="No .inf file selected"
+                                     Foreground="{DynamicResource BrushTextFaint}"/>
+                            <Button x:Name="BrowseInfBtn" Grid.Row="0" Grid.Column="1"
+                                    Content="Browse .inf…" Margin="8,0,0,0"/>
+
+                            <TextBlock Grid.Row="2" Grid.ColumnSpan="2"
+                                       Text="Driver Model" FontSize="11"
                                        Foreground="{DynamicResource BrushTextMuted}"/>
-                            <TextBlock Grid.Column="2" Text="IP Address" FontSize="11"
-                                       Foreground="{DynamicResource BrushTextMuted}"/>
+                            <ListBox x:Name="DriverModelList" Grid.Row="4" Grid.ColumnSpan="2"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"/>
                         </Grid>
+                    </GroupBox>
 
-                        <!-- Add row -->
-                        <Grid Grid.Row="2">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="160"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="NewPrinterNameBox" Grid.Column="0"/>
-                            <TextBox x:Name="NewPrinterIPBox"   Grid.Column="2"/>
-                            <Button  x:Name="AddQueueBtn"       Grid.Column="4"
-                                     Content="Add Queue" Padding="10,4"/>
+                    <!-- Print Queues -->
+                    <GroupBox Header="Print Queues" Margin="0,0,0,4">
+                        <Grid Margin="4,6,4,4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="4"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="6"/>
+                                <RowDefinition Height="90"/>
+                                <RowDefinition Height="6"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Column labels -->
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="160"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Printer Name" FontSize="11"
+                                           Foreground="{DynamicResource BrushTextMuted}"/>
+                                <TextBlock Grid.Column="2" Text="IP Address" FontSize="11"
+                                           Foreground="{DynamicResource BrushTextMuted}"/>
+                            </Grid>
+
+                            <!-- Add row -->
+                            <Grid Grid.Row="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="160"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="NewPrinterNameBox" Grid.Column="0"/>
+                                <TextBox x:Name="NewPrinterIPBox"   Grid.Column="2"/>
+                                <Button  x:Name="AddQueueBtn"       Grid.Column="4"
+                                         Content="Add Queue" Padding="10,4"/>
+                            </Grid>
+
+                            <!-- Queue list — binds to PSCustomObject .Name / .IP properties -->
+                            <ListView x:Name="QueueListView" Grid.Row="4">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="Printer Name" Width="380">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               Foreground="{DynamicResource BrushTextBody}"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="IP Address" Width="155">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding IP}"
+                                                               Foreground="{DynamicResource BrushTextBody}"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+
+                            <Button x:Name="RemoveQueueBtn" Grid.Row="6"
+                                    Content="Remove Selected" HorizontalAlignment="Right"/>
                         </Grid>
+                    </GroupBox>
 
-                        <!-- Queue list -->
-                        <ListView x:Name="QueueListView" Grid.Row="4">
-                            <ListView.View>
-                                <GridView>
-                                    <GridViewColumn Header="Printer Name" Width="380"
-                                                    DisplayMemberBinding="{Binding Content}"/>
-                                    <GridViewColumn Header="IP Address"   Width="155"
-                                                    DisplayMemberBinding="{Binding Tag}"/>
-                                </GridView>
-                            </ListView.View>
-                        </ListView>
+                </StackPanel>
+            </ScrollViewer><!-- end shared form -->
 
-                        <Button x:Name="RemoveQueueBtn" Grid.Row="6"
-                                Content="Remove Selected" HorizontalAlignment="Right"/>
-                    </Grid>
-                </GroupBox>
-
-            </StackPanel><!-- end shared form -->
-
-            <!-- ── Action tab strip ── -->
-            <TabControl Grid.Row="1" Margin="12,0,12,8"
+            <!-- ── Action tab strip (always visible at bottom of main area) ── -->
+            <TabControl Grid.Row="1" Margin="12,0,12,8" MinHeight="160"
                         Background="{DynamicResource BrushPanelBg}">
 
                 <!-- Tab 1: Create and Package -->
@@ -512,8 +527,9 @@ $Script:MainXaml = @'
                         BorderThickness="0"
                         Padding="10,5"
                         FontSize="11" FontWeight="SemiBold"
-                        Content="▾  Log"/>
+                        Content="▸  Log"/>
                 <ScrollViewer x:Name="LogScrollViewer" Height="110"
+                              Visibility="Collapsed"
                               VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
                     <TextBox x:Name="LogBox" IsReadOnly="True" TextWrapping="Wrap"
@@ -603,9 +619,8 @@ function Set-Theme {
 
 function Write-Log {
     param([string]$Message)
-    $ts = Get-Date -Format 'HH:mm:ss'
     $Script:UI.LogBox.Dispatcher.Invoke([action]{
-        $Script:UI.LogBox.AppendText("[$ts] $Message`n")
+        $Script:UI.LogBox.AppendText("$Message`n")
         $Script:UI.LogBox.ScrollToEnd()
     })
 }
@@ -715,8 +730,8 @@ function Test-ForQueueOnly {
 function ConvertTo-PrinterArrayBlock {
     param([System.Windows.Controls.ListView]$ListView)
     $lines = foreach ($item in $ListView.Items) {
-        $n = $item.Content -replace "'", "''"
-        $i = $item.Tag     -replace "'", "''"
+        $n = $item.Name -replace "'", "''"
+        $i = $item.IP   -replace "'", "''"
         "    @{ Name = '$n'; IP = '$i' }"
     }
     return $lines -join "`n"
@@ -725,7 +740,7 @@ function ConvertTo-PrinterArrayBlock {
 function ConvertTo-NamesBlock {
     param([System.Windows.Controls.ListView]$ListView)
     $quoted = foreach ($item in $ListView.Items) {
-        $n = $item.Content -replace "'", "''"
+        $n = $item.Name -replace "'", "''"
         "'$n'"
     }
     return $quoted -join ', '
@@ -868,6 +883,36 @@ function Invoke-Package {
     return $true
 }
 
+function Write-DeploymentInstructions {
+    param(
+        [string]$OutFolder,
+        [string]$DeploymentName,
+        [string]$DeploymentType,
+        [string]$DriverName,
+        [System.Windows.Controls.ListView]$QueueListView
+    )
+    $lines = @(
+        "Deployment : $DeploymentName",
+        "Type       : $DeploymentType",
+        "Generated  : $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
+        "Driver     : $DriverName",
+        ''
+    )
+    if ($null -ne $QueueListView -and $QueueListView.Items.Count -gt 0) {
+        $lines += 'Print Queues:'
+        foreach ($item in $QueueListView.Items) {
+            $lines += "  $($item.Name)  ($($item.IP))"
+        }
+        $lines += ''
+    }
+    $lines += @(
+        'Intune Commands',
+        '  Install  : powershell.exe -ExecutionPolicy Bypass -File ".\deploy.ps1" -Action Install',
+        '  Uninstall: powershell.exe -ExecutionPolicy Bypass -File ".\deploy.ps1" -Action Uninstall'
+    )
+    Set-Content -Path (Join-Path $OutFolder 'deployment-info.txt') -Value $lines -Encoding UTF8
+}
+
 function Write-IntuneCmdHint {
     Write-Log '--- Intune commands ---'
     Write-Log 'Install:   powershell.exe -ExecutionPolicy Bypass -File ".\deploy.ps1" -Action Install'
@@ -957,12 +1002,9 @@ function Show-MainWindow {
             Write-Log "ERROR: '$ip' is not a valid IP address."; return
         }
         foreach ($item in $Script:UI.QueueListView.Items) {
-            if ($item.Content -ieq $name) { Write-Log "ERROR: A queue named '$name' already exists."; return }
+            if ($item.Name -ieq $name) { Write-Log "ERROR: A queue named '$name' already exists."; return }
         }
-        $lvi = [System.Windows.Controls.ListViewItem]::new()
-        $lvi.Content = $name
-        $lvi.Tag     = $ip
-        [void]$Script:UI.QueueListView.Items.Add($lvi)
+        [void]$Script:UI.QueueListView.Items.Add([PSCustomObject]@{ Name = $name; IP = $ip })
         $Script:UI.NewPrinterNameBox.Text = ''
         $Script:UI.NewPrinterIPBox.Text   = ''
         $Script:UI.NewPrinterNameBox.Focus() | Out-Null
@@ -1007,6 +1049,9 @@ function Show-MainWindow {
         $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
+        Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName $deployName `
+            -DeploymentType 'Full (driver + print queues)' `
+            -DriverName $driverName -QueueListView $Script:UI.QueueListView
         Write-Log "Scripts written."
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
@@ -1033,6 +1078,9 @@ function Show-MainWindow {
         $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
+        Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName $deployName `
+            -DeploymentType 'Full (driver + print queues)' `
+            -DriverName $driverName -QueueListView $Script:UI.QueueListView
         Write-Log "Scripts written."
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
@@ -1058,6 +1106,9 @@ function Show-MainWindow {
         $detect = New-DriverDetectScript     -DriverName $driverName
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
+        Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName "$deployName-Driver" `
+            -DeploymentType 'Driver only' `
+            -DriverName $driverName -QueueListView $null
         Write-Log "Scripts written."
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
@@ -1081,6 +1132,9 @@ function Show-MainWindow {
         $detect = New-PrinterDetectScript     -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
+        Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName "$deployName-QueueOnly" `
+            -DeploymentType 'Print queues only' `
+            -DriverName $driverName -QueueListView $Script:UI.QueueListView
         Write-Log "Scripts written."
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
