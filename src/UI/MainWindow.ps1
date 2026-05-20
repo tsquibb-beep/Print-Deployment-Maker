@@ -285,9 +285,15 @@ $Script:MainXaml = @'
                                Margin="10,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <Button x:Name="ThemeBtn" Grid.Column="2" Content="☾  Dark"
-                        Style="{StaticResource FlatBtn}"
-                        Background="#1A5FA8" Foreground="White" Padding="10,5"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="ResetBtn" Content="Reset"
+                            Style="{StaticResource FlatBtn}"
+                            Background="#8B0000" Foreground="White" Padding="10,5"
+                            Margin="0,0,8,0"/>
+                    <Button x:Name="ThemeBtn" Content="☾  Dark"
+                            Style="{StaticResource FlatBtn}"
+                            Background="#1A5FA8" Foreground="White" Padding="10,5"/>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -973,6 +979,7 @@ function Show-MainWindow {
         DriverOnlyBtn    = $window.FindName('DriverOnlyBtn')
         QueueOnlyBtn     = $window.FindName('QueueOnlyBtn')
         ThemeBtn         = $window.FindName('ThemeBtn')
+        ResetBtn         = $window.FindName('ResetBtn')
         VersionText      = $window.FindName('VersionText')
     }
 
@@ -1154,6 +1161,31 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+    })
+
+    # ── Reset ──
+    $Script:UI.ResetBtn.Add_Click({
+        $confirm = [System.Windows.MessageBox]::Show(
+            'Clear all fields and start a new deployment?',
+            'Reset',
+            [System.Windows.MessageBoxButton]::OKCancel,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($confirm -ne [System.Windows.MessageBoxResult]::OK) { return }
+
+        $Script:InfPath          = ''
+        $Script:InfSourceDir     = ''
+        $Script:DriverFolderName = ''
+        $Script:InfFileName      = ''
+
+        $Script:UI.DeploymentNameBox.Text  = ''
+        $Script:UI.InfPathBox.Text         = 'No .inf file selected'
+        $Script:UI.InfPathBox.Foreground   = $Script:UI.Window.Resources['BrushTextFaint']
+        $Script:UI.DriverModelList.Items.Clear()
+        $Script:UI.QueueListView.Items.Clear()
+        $Script:UI.NewPrinterNameBox.Text  = ''
+        $Script:UI.NewPrinterIPBox.Text    = ''
+        $Script:UI.ManualDriverBox.Text    = ''
+        Write-Log "Form reset."
     })
 
     # ── Theme toggle ──
