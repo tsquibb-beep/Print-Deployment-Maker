@@ -773,7 +773,7 @@ if ($Action -eq 'Install') {
         if (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue) {
             Add-Printer -Name $p.Name -PortName $portName -DriverName $DriverName
         } else {
-            Write-Warning "Driver '$DriverName' not found — '$($p.Name)' not added"
+            Write-Warning "Driver '$DriverName' not found - '$($p.Name)' not added"
         }
     }
 } elseif ($Action -eq 'Uninstall') {
@@ -834,7 +834,7 @@ if ($Action -eq 'Install') {
         if (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue) {
             Add-Printer -Name $p.Name -PortName $portName -DriverName $DriverName
         } else {
-            Write-Warning "Driver '$DriverName' not found — '$($p.Name)' not added"
+            Write-Warning "Driver '$DriverName' not found - '$($p.Name)' not added"
         }
     }
 } elseif ($Action -eq 'Uninstall') {
