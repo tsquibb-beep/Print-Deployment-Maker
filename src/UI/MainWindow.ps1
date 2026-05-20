@@ -852,8 +852,23 @@ function New-PrinterDetectScript {
     param([string]$NamesBlock)
     $template = @'
 $printerNames = @(__NAMES_BLOCK__)
-$missing = $printerNames | Where-Object { -not (Get-Printer -Name $_ -ErrorAction SilentlyContinue) }
-if ($missing.Count -eq 0) { exit 0 } else { exit 1 }
+$missingPrinters = @()
+
+foreach ($printerName in $printerNames) {
+    $printer = Get-Printer -Name $printerName -ErrorAction SilentlyContinue
+    if ($printer -eq $null) {
+        Write-Host "Printer '$printerName' not found."
+        $missingPrinters += $printerName
+    }
+}
+
+if ($missingPrinters.Count -eq 0) {
+    Write-Host "All printers found."
+    Exit 0
+} else {
+    Write-Host "Some printers are missing: $($missingPrinters -join ', ')"
+    Exit 1
+}
 '@
     return $template -replace '__NAMES_BLOCK__', $NamesBlock
 }
