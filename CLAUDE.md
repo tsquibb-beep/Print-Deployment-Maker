@@ -18,6 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - MAJOR: breaking changes / major rewrites
   - MINOR: new user-visible features
   - PATCH: bug fixes, UI polish, under-the-hood improvements
+- Bump `version.txt` as part of the same commit as the change, every session
 - To release: edit `version.txt`, commit, then `git tag v0.x.x && git push --tags`
 
 ---
@@ -49,7 +50,7 @@ A portable WPF PowerShell tool that generates Intune printer deployment packages
 Print Deployment Maker\
 ├── Start.cmd                  ← double-click launcher
 ├── Start.ps1                  ← entry point; reads version.txt, calls Show-MainWindow
-├── version.txt                ← SemVer single source of truth (currently 0.1.1)
+├── version.txt                ← SemVer single source of truth (currently 0.1.3)
 ├── IntuneWinAppUtil.exe       ← gitignored; must be present to use packaging buttons
 ├── NJK-Printer\               ← gitignored reference deployment; NEVER modify
 ├── Packages\                  ← gitignored runtime output
@@ -89,6 +90,9 @@ Driver files are copied to `C:\ProgramData\AutoPilotConfig\Printers\<DriverFolde
 ### Theme system
 `Set-Theme -Dark $true/$false` swaps all `DynamicResource` brushes (`BrushWinBg`, `BrushPanelBg`, etc.) via a palette hashtable. System highlight colour keys are also replaced. Dark mode TextBox readability requires a custom `ControlTemplate` on the implicit TextBox style — the inner `Border` must use `Background="{TemplateBinding Background}"` to bypass the WPF Aero renderer.
 
+### Reset button
+Dark red `ResetBtn` in the header bar (right of `ThemeBtn`). On click: shows `MessageBox` OK/Cancel warning, then clears all form fields, driver model list, queue list, and the four `$Script:Inf*` state variables. `InfPathBox.Foreground` is restored via `$Script:UI.Window.Resources['BrushTextFaint']` so it respects the active theme.
+
 ### Script-scope state
 `$Script:InfPath`, `$Script:InfSourceDir`, `$Script:DriverFolderName`, `$Script:InfFileName`, `$Script:ScriptRoot`, `$Script:UI` (control hashtable), `$Script:IsDarkMode`
 
@@ -114,12 +118,19 @@ Outer Grid (3 rows): header (Auto) | main area (*) | collapsible log (Auto).
 Inner Grid (2 rows): scrollable shared form (*) | tab strip (Auto, MinHeight=160).
 The tab strip is always visible at the bottom; the form scrolls if the window is too short.
 Log pane starts **collapsed** — user clicks `▸ Log` to expand.
+Header right column is a `StackPanel` containing `ResetBtn` then `ThemeBtn`.
+
+### Generated detect.ps1 — printer detection pattern
+The printer detect template uses an explicit `foreach` loop with a `$missingPrinters = @()` accumulator, matching the proven NJK-Printer reference deployment. Do **not** rewrite it as a `Where-Object` pipeline — `$null.Count` behaviour is unreliable across Intune's execution contexts. The template lives in `New-PrinterDetectScript` and produces `Write-Host` output for Intune log visibility.
+
+### Encoding rule for generated scripts
+All string literals written into generated `deploy.ps1` / `detect.ps1` content must use plain ASCII. Em dashes, curly quotes, and other Unicode characters in here-string templates cause parse failures on target devices where PowerShell reads the file as Windows-1252 instead of UTF-8.
 
 ---
 
 ## Current Status
 
-**v0.1.1**
+**v0.1.3**
 - WPF UI with 4 action buttons across themed tabs
 - INF driver model parser (ListBox, scrollable)
 - Full / driver-only / queue-only script generators
@@ -129,3 +140,6 @@ Log pane starts **collapsed** — user clicks `▸ Log` to expand.
 - IntuneWinAppUtil.exe packaging integration
 - ScriptRoot bug fixed (output goes to project root `Packages\`, not `src\UI\Packages\`)
 - ListView queue items visible in both themes
+- Reset button in header with OK/Cancel confirmation
+- deploy.ps1 encoding fix (em dash replaced with hyphen)
+- detect.ps1 template matches NJK-Printer reference pattern (foreach + @() accumulator)
