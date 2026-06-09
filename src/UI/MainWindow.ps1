@@ -395,11 +395,11 @@ $Script:MainXaml = @'
                                          Content="Add Queue" Padding="10,4"/>
                             </Grid>
 
-                            <!-- Queue list — binds to PSCustomObject .Name / .IP properties -->
+                            <!-- Queue list — binds to PSCustomObject .Name / .IP / .SettingsSummary properties -->
                             <ListView x:Name="QueueListView" Grid.Row="4">
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header="Printer Name" Width="380">
+                                        <GridViewColumn Header="Printer Name" Width="270">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding Name}"
@@ -407,10 +407,18 @@ $Script:MainXaml = @'
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
-                                        <GridViewColumn Header="IP Address" Width="155">
+                                        <GridViewColumn Header="IP Address" Width="135">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding IP}"
+                                                               Foreground="{DynamicResource BrushTextBody}"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Settings" Width="130">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SettingsSummary}"
                                                                Foreground="{DynamicResource BrushTextBody}"/>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
@@ -419,8 +427,23 @@ $Script:MainXaml = @'
                                 </ListView.View>
                             </ListView>
 
-                            <Button x:Name="RemoveQueueBtn" Grid.Row="6"
-                                    Content="Remove Selected" HorizontalAlignment="Right"/>
+                            <!-- Printing defaults (staging printer) + remove -->
+                            <Grid Grid.Row="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <Button x:Name="StageSettingsBtn"
+                                            Content="Install staging printer &amp; open settings"
+                                            Padding="10,4"/>
+                                    <Button x:Name="CaptureSettingsBtn" Margin="6,0,0,0"
+                                            Content="Capture to selected queue" Padding="10,4"
+                                            IsEnabled="False"/>
+                                </StackPanel>
+                                <Button x:Name="RemoveQueueBtn" Grid.Column="1"
+                                        Content="Remove Selected" HorizontalAlignment="Right"/>
+                            </Grid>
                         </Grid>
                     </GroupBox>
 
@@ -559,6 +582,7 @@ $Script:InfSourceDir     = ''
 $Script:DriverFolderName = ''
 $Script:InfFileName      = ''
 $Script:ScriptRoot       = ''
+$Script:StagingPrinterName = ''
 $Script:UI               = @{}
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
@@ -731,6 +755,78 @@ function Test-ForQueueOnly {
     return $true
 }
 
+# ── Printer settings (staging) ────────────────────────────────────────────────
+
+# Remove the throwaway staging printer (if any) and clear the tracked name.
+function Remove-StagingPrinter {
+    if ($Script:StagingPrinterName) {
+        Get-Printer -Name $Script:StagingPrinterName -ErrorAction SilentlyContinue | Remove-Printer -ErrorAction SilentlyContinue
+        $Script:StagingPrinterName = ''
+    }
+}
+
+# Read the staging printer's current driver settings as a PrintTicket XML string.
+# Uses the .NET UserPrintTicket so it reflects exactly what the printui /e
+# (Printing Preferences) dialog set. On the target, Set-PrintConfiguration
+# -PrintTicketXml applies the same ticket as the queue default.
+function Get-StagingPrintTicket {
+    param([string]$PrinterName)
+    Add-Type -AssemblyName ReachFramework -ErrorAction Stop
+    $server = New-Object System.Printing.LocalPrintServer
+    try {
+        $queue = $server.GetPrintQueue($PrinterName)
+        $queue.Refresh()
+        $ticket = $queue.UserPrintTicket
+
+        $ms = New-Object System.IO.MemoryStream
+        $ticket.SaveTo($ms)
+        $xml = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+        $ms.Dispose()
+
+        $parts = @()
+        if ($null -ne $ticket.Duplexing) {
+            switch ($ticket.Duplexing.ToString()) {
+                'OneSided'           { $parts += '1-sided' }
+                'TwoSidedLongEdge'   { $parts += '2-sided' }
+                'TwoSidedShortEdge'  { $parts += '2-sided (short)' }
+            }
+        }
+        if ($null -ne $ticket.OutputColor) {
+            switch ($ticket.OutputColor.ToString()) {
+                'Color'      { $parts += 'Color' }
+                'Grayscale'  { $parts += 'Grayscale' }
+                'Monochrome' { $parts += 'Mono' }
+            }
+        }
+        $summary = if ($parts.Count) { $parts -join ', ' } else { 'captured' }
+        return [PSCustomObject]@{ Xml = $xml; Summary = $summary }
+    } finally {
+        $server.Dispose()
+    }
+}
+
+# Write each queue's captured PrintTicket XML to <OutFolder>\settings\queueN.xml and
+# stamp a transient .SettingsFile (relative path) onto the item. Queues with no
+# captured settings get .SettingsFile = ''. Keeps the XML out of deploy.ps1 so that
+# script stays plain ASCII.
+function Export-QueueSettingsFiles {
+    param([string]$OutFolder, [System.Windows.Controls.ListView]$ListView)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $i = 0
+    foreach ($item in $ListView.Items) {
+        $i++
+        if (-not [string]::IsNullOrWhiteSpace($item.SettingsXml)) {
+            $settingsDir = Join-Path $OutFolder 'settings'
+            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+            $rel  = "settings\queue$i.xml"
+            [System.IO.File]::WriteAllText((Join-Path $OutFolder $rel), $item.SettingsXml, $utf8NoBom)
+            $item | Add-Member -NotePropertyName SettingsFile -NotePropertyValue $rel -Force
+        } else {
+            $item | Add-Member -NotePropertyName SettingsFile -NotePropertyValue '' -Force
+        }
+    }
+}
+
 # ── Script generation ─────────────────────────────────────────────────────────
 
 function ConvertTo-PrinterArrayBlock {
@@ -738,7 +834,10 @@ function ConvertTo-PrinterArrayBlock {
     $lines = foreach ($item in $ListView.Items) {
         $n = $item.Name -replace "'", "''"
         $i = $item.IP   -replace "'", "''"
-        "    @{ Name = '$n'; IP = '$i' }"
+        $sf = ''
+        if ($item.PSObject.Properties['SettingsFile']) { $sf = [string]$item.SettingsFile }
+        $sf = $sf -replace "'", "''"
+        "    @{ Name = '$n'; IP = '$i'; SettingsFile = '$sf' }"
     }
     return $lines -join "`n"
 }
@@ -778,6 +877,14 @@ if ($Action -eq 'Install') {
         }
         if (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue) {
             Add-Printer -Name $p.Name -PortName $portName -DriverName $DriverName
+            if ($p.SettingsFile -and (Test-Path "$PSScriptRoot\$($p.SettingsFile)")) {
+                try {
+                    Set-PrintConfiguration -PrinterName $p.Name `
+                        -PrintTicketXml (Get-Content "$PSScriptRoot\$($p.SettingsFile)" -Raw)
+                } catch {
+                    Write-Warning "Could not apply settings to '$($p.Name)' - $_"
+                }
+            }
         } else {
             Write-Warning "Driver '$DriverName' not found - '$($p.Name)' not added"
         }
@@ -839,6 +946,14 @@ if ($Action -eq 'Install') {
         }
         if (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue) {
             Add-Printer -Name $p.Name -PortName $portName -DriverName $DriverName
+            if ($p.SettingsFile -and (Test-Path "$PSScriptRoot\$($p.SettingsFile)")) {
+                try {
+                    Set-PrintConfiguration -PrinterName $p.Name `
+                        -PrintTicketXml (Get-Content "$PSScriptRoot\$($p.SettingsFile)" -Raw)
+                } catch {
+                    Write-Warning "Could not apply settings to '$($p.Name)' - $_"
+                }
+            }
         } else {
             Write-Warning "Driver '$DriverName' not found - '$($p.Name)' not added"
         }
@@ -922,7 +1037,10 @@ function Write-DeploymentInstructions {
     if ($null -ne $QueueListView -and $QueueListView.Items.Count -gt 0) {
         $lines += 'Print Queues:'
         foreach ($item in $QueueListView.Items) {
-            $lines += "  $($item.Name)  ($($item.IP))"
+            $settings = if ($item.SettingsSummary -and $item.SettingsSummary -ne 'default') {
+                "  [$($item.SettingsSummary)]"
+            } else { '' }
+            $lines += "  $($item.Name)  ($($item.IP))$settings"
         }
         $lines += ''
     }
@@ -974,6 +1092,8 @@ function Show-MainWindow {
         AddQueueBtn      = $window.FindName('AddQueueBtn')
         QueueListView    = $window.FindName('QueueListView')
         RemoveQueueBtn   = $window.FindName('RemoveQueueBtn')
+        StageSettingsBtn = $window.FindName('StageSettingsBtn')
+        CaptureSettingsBtn = $window.FindName('CaptureSettingsBtn')
         CreateBtn        = $window.FindName('CreateBtn')
         CreatePackageBtn = $window.FindName('CreatePackageBtn')
         DriverOnlyBtn    = $window.FindName('DriverOnlyBtn')
@@ -1026,7 +1146,8 @@ function Show-MainWindow {
         foreach ($item in $Script:UI.QueueListView.Items) {
             if ($item.Name -ieq $name) { Write-Log "ERROR: A queue named '$name' already exists."; return }
         }
-        [void]$Script:UI.QueueListView.Items.Add([PSCustomObject]@{ Name = $name; IP = $ip })
+        [void]$Script:UI.QueueListView.Items.Add(
+            [PSCustomObject]@{ Name = $name; IP = $ip; SettingsXml = ''; SettingsSummary = 'default' })
         $Script:UI.NewPrinterNameBox.Text = ''
         $Script:UI.NewPrinterIPBox.Text   = ''
         $Script:UI.NewPrinterNameBox.Focus() | Out-Null
@@ -1037,6 +1158,66 @@ function Show-MainWindow {
         $sel = $Script:UI.QueueListView.SelectedItem
         if ($null -eq $sel) { Write-Log 'Select a queue in the list first.'; return }
         $Script:UI.QueueListView.Items.Remove($sel)
+    })
+
+    # ── Install staging printer & open its driver settings ──
+    # Installs the selected driver locally (if needed) and creates a throwaway queue
+    # on the built-in FILE: port purely so the driver's settings dialog can be opened.
+    # Name/IP are irrelevant: the captured PrintTicket is driver-schema only.
+    $Script:UI.StageSettingsBtn.Add_Click({
+        if ($null -eq $Script:UI.DriverModelList.SelectedItem) {
+            Write-Log 'ERROR: Select a driver model first.'; return
+        }
+        if (-not $Script:InfPath) { Write-Log 'ERROR: Browse for a .inf file first.'; return }
+        $driverName = $Script:UI.DriverModelList.SelectedItem.ToString()
+        $stageName  = 'PDM-Staging-' + ($Script:DriverFolderName -replace '[\\/:*?"<>|]', '_')
+
+        try {
+            Remove-StagingPrinter   # clear any leftover from a previous attempt
+
+            if (-not (Get-PrinterDriver -Name $driverName -ErrorAction SilentlyContinue)) {
+                Write-Log "Installing driver locally: $driverName"
+                & pnputil.exe /add-driver "$Script:InfPath" /install | Out-Null
+                Add-PrinterDriver -Name $driverName -ErrorAction Stop
+            }
+
+            Add-Printer -Name $stageName -DriverName $driverName -PortName 'FILE:' -ErrorAction Stop
+            $Script:StagingPrinterName = $stageName
+            Write-Log "Staging printer created: $stageName"
+
+            # Open the driver's printing-preferences dialog directly.
+            Start-Process -FilePath 'rundll32.exe' `
+                -ArgumentList 'printui.dll,PrintUIEntry', '/e', '/n', $stageName
+            $Script:UI.CaptureSettingsBtn.IsEnabled = $true
+            Write-Log 'Set your defaults in the dialog, click OK, then click "Capture to selected queue".'
+        } catch {
+            Write-Log "ERROR: Could not create staging printer - $($_.Exception.Message)"
+            Write-Log 'If this is an access error, run the app as Administrator.'
+            Remove-StagingPrinter
+        }
+    })
+
+    # ── Capture staging printer settings into the selected queue ──
+    $Script:UI.CaptureSettingsBtn.Add_Click({
+        if (-not $Script:StagingPrinterName) {
+            Write-Log 'ERROR: Install a staging printer first.'; return
+        }
+        $sel = $Script:UI.QueueListView.SelectedItem
+        if ($null -eq $sel) { Write-Log 'ERROR: Select the queue to apply these settings to.'; return }
+
+        try {
+            $ticket = Get-StagingPrintTicket -PrinterName $Script:StagingPrinterName
+            $sel.SettingsXml     = $ticket.Xml
+            $sel.SettingsSummary = $ticket.Summary
+            $Script:UI.QueueListView.Items.Refresh()
+            Write-Log "Captured settings for '$($sel.Name)': $($ticket.Summary)"
+        } catch {
+            Write-Log "ERROR: Could not read staging printer settings - $($_.Exception.Message)"
+            return
+        } finally {
+            Remove-StagingPrinter
+            $Script:UI.CaptureSettingsBtn.IsEnabled = $false
+        }
     })
 
     # ── Log collapse/expand ──
@@ -1066,6 +1247,7 @@ function Show-MainWindow {
         New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
         Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
         Write-Log "Driver files copied."
+        Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
         $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb
         $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
@@ -1095,6 +1277,7 @@ function Show-MainWindow {
         New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
         Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
         Write-Log "Driver files copied."
+        Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
         $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb
         $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
@@ -1149,6 +1332,7 @@ function Show-MainWindow {
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
         Write-Log "Creating print-queue-only deployment: $deployName-QueueOnly"
         New-Item -ItemType Directory -Path $outFolder -Force | Out-Null
+        Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
         $deploy = New-QueueOnlyDeployScript   -DriverName $driverName -PrintersBlock $pb
         $detect = New-PrinterDetectScript     -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
@@ -1185,6 +1369,8 @@ function Show-MainWindow {
         $Script:UI.NewPrinterNameBox.Text  = ''
         $Script:UI.NewPrinterIPBox.Text    = ''
         $Script:UI.ManualDriverBox.Text    = ''
+        Remove-StagingPrinter
+        $Script:UI.CaptureSettingsBtn.IsEnabled = $false
         Write-Log "Form reset."
     })
 

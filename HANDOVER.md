@@ -1,8 +1,46 @@
 # Session Handover — Print Deployment Maker
 
-**Date:** 2026-05-21
-**Version at handover:** 0.1.3
+**Date:** 2026-06-09
+**Version at handover:** 0.2.0
 **Repo:** git@github.com:tsquibb-beep/Print-Deployment-Maker.git
+
+---
+
+## What Changed This Session (v0.1.3 → v0.2.0)
+
+**Per-queue print settings capture (duplex, color/mono, paper, etc.).**
+
+Workflow: pick the driver → **Install staging printer & open settings** → set defaults
+in the driver dialog → select a queue → **Capture to selected queue**. The captured
+PrintTicket travels into the package and is applied on the target after `Add-Printer`.
+
+- New UI: two buttons in the Print Queues group (`StageSettingsBtn`,
+  `CaptureSettingsBtn` — capture starts disabled), plus a "Settings" column on
+  `QueueListView` bound to `SettingsSummary`.
+- Queue PSCustomObjects now carry `SettingsXml` + `SettingsSummary` (default
+  `'default'`).
+- `StageSettingsBtn`: installs the driver locally if missing
+  (`pnputil /add-driver /install` + `Add-PrinterDriver`), creates
+  `PDM-Staging-<DriverFolder>` on the `FILE:` port, opens
+  `rundll32 printui.dll,PrintUIEntry /e /n <name>`.
+- `CaptureSettingsBtn`: `Get-StagingPrintTicket` reads the queue's `UserPrintTicket`
+  via .NET `System.Printing` (`ReachFramework`), stamps the selected queue, then
+  `Remove-StagingPrinter` auto-deletes the staging queue.
+- `Export-QueueSettingsFiles` writes `settings\queueN.xml` (UTF-8 **no BOM**);
+  `ConvertTo-PrinterArrayBlock` emits `SettingsFile`; Full + Queue-Only `deploy.ps1`
+  templates apply it via `Set-PrintConfiguration -PrintTicketXml`.
+- `deployment-info.txt` shows `[2-sided, Mono]`-style summaries per queue.
+- Validated: PS parser clean + XAML loads with all controls found (parse-only;
+  not yet run live on Windows).
+
+### ⚠️ Still needs a real Windows smoke test (couldn't run from WSL)
+1. Run elevated; confirm staging printer installs, `/e` dialog opens, capture reads
+   the chosen duplex/color and the staging printer auto-removes.
+2. Confirm `Set-PrintConfiguration -PrintTicketXml` accepts the `UserPrintTicket`
+   XML on a target (PrintTicket schema → print-config). If it rejects it, the
+   fallback is to capture/apply via `Get/Set-PrintConfiguration`'s own
+   `PrintTicketXml` round-trip instead.
+3. Confirm the no-settings path is unchanged.
 
 ---
 

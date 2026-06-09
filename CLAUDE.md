@@ -50,7 +50,7 @@ A portable WPF PowerShell tool that generates Intune printer deployment packages
 Print Deployment Maker\
 ├── Start.cmd                  ← double-click launcher
 ├── Start.ps1                  ← entry point; reads version.txt, calls Show-MainWindow
-├── version.txt                ← SemVer single source of truth (currently 0.1.3)
+├── version.txt                ← SemVer single source of truth (currently 0.2.0)
 ├── IntuneWinAppUtil.exe       ← gitignored; must be present to use packaging buttons
 ├── NJK-Printer\               ← gitignored reference deployment; NEVER modify
 ├── Packages\                  ← gitignored runtime output
@@ -120,6 +120,31 @@ The tab strip is always visible at the bottom; the form scrolls if the window is
 Log pane starts **collapsed** — user clicks `▸ Log` to expand.
 Header right column is a `StackPanel` containing `ResetBtn` then `ThemeBtn`.
 
+### Per-queue print settings (staging printer)
+Each queue can carry captured driver defaults (duplex, color/mono, paper, etc.).
+Flow: pick the driver → **Install staging printer & open settings** creates a
+throwaway local queue `PDM-Staging-<DriverFolder>` on the built-in `FILE:` port
+(installing the driver locally via `pnputil /add-driver /install` + `Add-PrinterDriver`
+first if needed) and opens its driver dialog with
+`rundll32 printui.dll,PrintUIEntry /e /n <name>`. The user sets defaults, then
+**Capture to selected queue** reads the queue's `UserPrintTicket` via .NET
+`System.Printing` (`Get-StagingPrintTicket`) as PrintTicket XML, stamps `SettingsXml`
++ `SettingsSummary` onto the selected queue's PSCustomObject, and auto-removes the
+staging printer (`Remove-StagingPrinter`).
+
+The staging printer's name/IP are irrelevant — a PrintTicket is driver-schema only,
+so it transfers to any same-driver queue. **Staging needs the app run elevated**
+(install/remove printer + pnputil); package generation does not.
+
+At package time, `Export-QueueSettingsFiles` writes each queue's XML to
+`settings\queueN.xml` (UTF-8 **no BOM**, so `Set-PrintConfiguration` doesn't choke on
+a BOM) and stamps a transient `.SettingsFile` relative path. `ConvertTo-PrinterArrayBlock`
+emits `SettingsFile` into the deploy `$Printers` block. The Full and Queue-Only
+`deploy.ps1` templates, after `Add-Printer`, run
+`Set-PrintConfiguration -PrinterName $p.Name -PrintTicketXml (Get-Content ... -Raw)`
+when a settings file is present. The XML lives in separate files — never inline in
+`deploy.ps1` — so the deploy script stays plain ASCII (encoding rule).
+
 ### Generated detect.ps1 — printer detection pattern
 The printer detect template uses an explicit `foreach` loop with a `$missingPrinters = @()` accumulator, matching the proven NJK-Printer reference deployment. Do **not** rewrite it as a `Where-Object` pipeline — `$null.Count` behaviour is unreliable across Intune's execution contexts. The template lives in `New-PrinterDetectScript` and produces `Write-Host` output for Intune log visibility.
 
@@ -130,7 +155,10 @@ All string literals written into generated `deploy.ps1` / `detect.ps1` content m
 
 ## Current Status
 
-**v0.1.3**
+**v0.2.0**
+- Per-queue print settings: install a local staging printer from the selected driver,
+  set defaults in the driver dialog, capture them per queue, and apply on target via
+  `Set-PrintConfiguration` after `Add-Printer` (PrintTicket XML in `settings\queueN.xml`)
 - WPF UI with 4 action buttons across themed tabs
 - INF driver model parser (ListBox, scrollable)
 - Full / driver-only / queue-only script generators
