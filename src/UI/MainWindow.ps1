@@ -1177,8 +1177,15 @@ function Show-MainWindow {
 
             if (-not (Get-PrinterDriver -Name $driverName -ErrorAction SilentlyContinue)) {
                 Write-Log "Installing driver locally: $driverName"
-                & pnputil.exe /add-driver "$Script:InfPath" /install | Out-Null
-                Add-PrinterDriver -Name $driverName -ErrorAction Stop
+                # Use the same prndrvr.vbs method the generated deploy.ps1 uses (proven).
+                $prndrvr = 'C:\Windows\System32\Printing_Admin_Scripts\en-US\prndrvr.vbs'
+                & cscript.exe '//nologo' $prndrvr -a -m $driverName `
+                    -h "$Script:InfSourceDir\" `
+                    -i (Join-Path $Script:InfSourceDir $Script:InfFileName) 2>&1 |
+                    ForEach-Object { Write-Log "  $_" }
+                if (-not (Get-PrinterDriver -Name $driverName -ErrorAction SilentlyContinue)) {
+                    throw "prndrvr.vbs did not register '$driverName' (see log above). Run as Administrator if this is an access error."
+                }
             }
 
             Add-Printer -Name $stageName -DriverName $driverName -PortName 'FILE:' -ErrorAction Stop
