@@ -443,15 +443,32 @@ $Script:MainXaml = @'
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Orientation="Horizontal">
-                                    <Button x:Name="StageSettingsBtn"
-                                            Content="Install staging printer &amp; open settings"
-                                            Padding="10,4"/>
-                                    <Button x:Name="CaptureSettingsBtn" Margin="6,0,0,0"
-                                            Content="Capture to selected queue" Padding="10,4"
-                                            IsEnabled="False"/>
+                                <StackPanel Grid.Column="0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button x:Name="StageSettingsBtn"
+                                                Content="Install staging printer &amp; open settings"
+                                                Padding="10,4"/>
+                                        <Button x:Name="CaptureSettingsBtn" Margin="6,0,0,0"
+                                                Content="Capture to selected queue" Padding="10,4"
+                                                IsEnabled="False"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="DevmodeCheck" Margin="2,7,0,0"
+                                              Content="Capture vendor-specific driver settings (full DEVMODE)"
+                                              Foreground="{DynamicResource BrushTextBody}">
+                                        <CheckBox.ToolTip>
+                                            <TextBlock MaxWidth="320" TextWrapping="Wrap">
+                                                Use this for driver-private options the standard capture cannot see -
+                                                e.g. Toshiba "Print Job" modes (Private, Hold, Scheduled print).
+                                                Captures the full driver DEVMODE. Less portable: target devices must
+                                                run the SAME driver version. Set these under the printer's Printing Defaults.
+                                            </TextBlock>
+                                        </CheckBox.ToolTip>
+                                    </CheckBox>
+                                    <TextBlock Margin="2,2,0,0" FontSize="10" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource BrushTextFaint}"
+                                               Text="Tick for vendor-only modes (Private / Hold / Scheduled print). Otherwise the standard capture (duplex, color, paper) is more portable."/>
                                 </StackPanel>
-                                <Button x:Name="RemoveQueueBtn" Grid.Column="1"
+                                <Button x:Name="RemoveQueueBtn" Grid.Column="1" VerticalAlignment="Top"
                                         Content="Remove Selected" HorizontalAlignment="Right"/>
                             </Grid>
                         </Grid>
@@ -817,10 +834,42 @@ function Get-StagingPrintTicket {
             }
         }
         $summary = if ($parts.Count) { $parts -join ', ' } else { 'captured' }
-        return [PSCustomObject]@{ Xml = $xml; Summary = $summary }
+        return [PSCustomObject]@{ Blob = $xml; Summary = $summary }
     } finally {
         $server.Dispose()
     }
+}
+
+# Capture the staging printer's full default DEVMODE straight from the registry
+# ('Default DevMode' = the printer's global/default settings, including the driver's
+# private region). Returns base64 so it can ride on the queue item until
+# Export-QueueSettingsFiles writes it out. This carries vendor-private job settings
+# (Private/Hold/Scheduled print, account codes) that the PrintTicket omits, at the
+# cost of portability (target must run the same driver version). Reading the registry
+# is silent and instant -- printui.dll /Ss pops a dialog on some drivers and hangs.
+function Get-StagingDevmode {
+    param([string]$PrinterName)
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers\$PrinterName"
+    $bytes = (Get-ItemProperty -Path $key -Name 'Default DevMode' -ErrorAction Stop).'Default DevMode'
+    if (-not $bytes -or $bytes.Length -eq 0) {
+        throw "No 'Default DevMode' found for '$PrinterName'."
+    }
+    $b64 = [System.Convert]::ToBase64String($bytes)
+
+    # Best-effort human summary from the default print configuration.
+    $summary = 'vendor (full)'
+    $cfg = Get-PrintConfiguration -PrinterName $PrinterName -ErrorAction SilentlyContinue
+    if ($cfg) {
+        $parts = @()
+        switch ("$($cfg.DuplexingMode)") {
+            'OneSided'          { $parts += '1-sided' }
+            'TwoSidedLongEdge'  { $parts += '2-sided' }
+            'TwoSidedShortEdge' { $parts += '2-sided (short)' }
+        }
+        if ($null -ne $cfg.Color) { $parts += (&{ if ($cfg.Color) { 'Color' } else { 'Mono' } }) }
+        if ($parts.Count) { $summary = ($parts -join ', ') + ' +vendor' }
+    }
+    return [PSCustomObject]@{ Blob = $b64; Summary = $summary }
 }
 
 # Write each queue's captured PrintTicket XML to <OutFolder>\settings\queueN.xml and
@@ -833,15 +882,20 @@ function Export-QueueSettingsFiles {
     $i = 0
     foreach ($item in $ListView.Items) {
         $i++
-        if (-not [string]::IsNullOrWhiteSpace($item.SettingsXml)) {
+        $rel = ''
+        if (-not [string]::IsNullOrWhiteSpace($item.SettingsBlob)) {
             $settingsDir = Join-Path $OutFolder 'settings'
             New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
-            $rel  = "settings\queue$i.xml"
-            [System.IO.File]::WriteAllText((Join-Path $OutFolder $rel), $item.SettingsXml, $utf8NoBom)
-            $item | Add-Member -NotePropertyName SettingsFile -NotePropertyValue $rel -Force
-        } else {
-            $item | Add-Member -NotePropertyName SettingsFile -NotePropertyValue '' -Force
+            if ($item.SettingsKind -eq 'devmode') {
+                $rel = "settings\queue$i.dat"
+                [System.IO.File]::WriteAllBytes((Join-Path $OutFolder $rel),
+                    [System.Convert]::FromBase64String($item.SettingsBlob))
+            } else {
+                $rel = "settings\queue$i.xml"
+                [System.IO.File]::WriteAllText((Join-Path $OutFolder $rel), $item.SettingsBlob, $utf8NoBom)
+            }
         }
+        $item | Add-Member -NotePropertyName SettingsFile -NotePropertyValue $rel -Force
     }
 }
 
@@ -855,7 +909,10 @@ function ConvertTo-PrinterArrayBlock {
         $sf = ''
         if ($item.PSObject.Properties['SettingsFile']) { $sf = [string]$item.SettingsFile }
         $sf = $sf -replace "'", "''"
-        "    @{ Name = '$n'; IP = '$i'; SettingsFile = '$sf' }"
+        $sk = ''
+        if ($item.PSObject.Properties['SettingsKind']) { $sk = [string]$item.SettingsKind }
+        $sk = $sk -replace "'", "''"
+        "    @{ Name = '$n'; IP = '$i'; SettingsFile = '$sf'; SettingsKind = '$sk' }"
     }
     return $lines -join "`n"
 }
@@ -888,6 +945,7 @@ if ($Action -eq 'Install') {
     Copy-Item -Path "$PSScriptRoot\$DriverFolder\*" -Destination $DriverStorePath -Recurse -Force
     & cscript 'C:\Windows\System32\Printing_Admin_Scripts\en-US\prndrvr.vbs' `
         -a -m $DriverName -h "$DriverStorePath\" -i "$DriverStorePath\$InfFileName"
+    $restartSpooler = $false
     foreach ($p in $Printers) {
         $portName = "TCPPort:$($p.IP)"
         if (-not (Get-PrinterPort -Name $portName -ErrorAction SilentlyContinue)) {
@@ -896,9 +954,17 @@ if ($Action -eq 'Install') {
         if (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue) {
             Add-Printer -Name $p.Name -PortName $portName -DriverName $DriverName
             if ($p.SettingsFile -and (Test-Path "$PSScriptRoot\$($p.SettingsFile)")) {
+                $settingsPath = "$PSScriptRoot\$($p.SettingsFile)"
                 try {
-                    Set-PrintConfiguration -PrinterName $p.Name `
-                        -PrintTicketXml (Get-Content "$PSScriptRoot\$($p.SettingsFile)" -Raw)
+                    if ($p.SettingsKind -eq 'devmode') {
+                        $regKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers\$($p.Name)"
+                        Set-ItemProperty -Path $regKey -Name 'Default DevMode' `
+                            -Value ([System.IO.File]::ReadAllBytes($settingsPath))
+                        $restartSpooler = $true
+                    } else {
+                        Set-PrintConfiguration -PrinterName $p.Name `
+                            -PrintTicketXml (Get-Content $settingsPath -Raw)
+                    }
                 } catch {
                     Write-Warning "Could not apply settings to '$($p.Name)' - $_"
                 }
@@ -906,6 +972,9 @@ if ($Action -eq 'Install') {
         } else {
             Write-Warning "Driver '$DriverName' not found - '$($p.Name)' not added"
         }
+    }
+    if ($restartSpooler) {
+        Restart-Service -Name Spooler -Force -ErrorAction SilentlyContinue
     }
 } elseif ($Action -eq 'Uninstall') {
     foreach ($p in $Printers) {
@@ -957,6 +1026,7 @@ __PRINTERS_BLOCK__
 )
 
 if ($Action -eq 'Install') {
+    $restartSpooler = $false
     foreach ($p in $Printers) {
         $portName = "TCPPort:$($p.IP)"
         if (-not (Get-PrinterPort -Name $portName -ErrorAction SilentlyContinue)) {
@@ -965,9 +1035,17 @@ if ($Action -eq 'Install') {
         if (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue) {
             Add-Printer -Name $p.Name -PortName $portName -DriverName $DriverName
             if ($p.SettingsFile -and (Test-Path "$PSScriptRoot\$($p.SettingsFile)")) {
+                $settingsPath = "$PSScriptRoot\$($p.SettingsFile)"
                 try {
-                    Set-PrintConfiguration -PrinterName $p.Name `
-                        -PrintTicketXml (Get-Content "$PSScriptRoot\$($p.SettingsFile)" -Raw)
+                    if ($p.SettingsKind -eq 'devmode') {
+                        $regKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers\$($p.Name)"
+                        Set-ItemProperty -Path $regKey -Name 'Default DevMode' `
+                            -Value ([System.IO.File]::ReadAllBytes($settingsPath))
+                        $restartSpooler = $true
+                    } else {
+                        Set-PrintConfiguration -PrinterName $p.Name `
+                            -PrintTicketXml (Get-Content $settingsPath -Raw)
+                    }
                 } catch {
                     Write-Warning "Could not apply settings to '$($p.Name)' - $_"
                 }
@@ -975,6 +1053,9 @@ if ($Action -eq 'Install') {
         } else {
             Write-Warning "Driver '$DriverName' not found - '$($p.Name)' not added"
         }
+    }
+    if ($restartSpooler) {
+        Restart-Service -Name Spooler -Force -ErrorAction SilentlyContinue
     }
 } elseif ($Action -eq 'Uninstall') {
     foreach ($p in $Printers) {
@@ -1112,6 +1193,7 @@ function Show-MainWindow {
         RemoveQueueBtn   = $window.FindName('RemoveQueueBtn')
         StageSettingsBtn = $window.FindName('StageSettingsBtn')
         CaptureSettingsBtn = $window.FindName('CaptureSettingsBtn')
+        DevmodeCheck     = $window.FindName('DevmodeCheck')
         CreateBtn        = $window.FindName('CreateBtn')
         CreatePackageBtn = $window.FindName('CreatePackageBtn')
         DriverOnlyBtn    = $window.FindName('DriverOnlyBtn')
@@ -1165,7 +1247,7 @@ function Show-MainWindow {
             if ($item.Name -ieq $name) { Write-Log "ERROR: A queue named '$name' already exists."; return }
         }
         [void]$Script:UI.QueueListView.Items.Add(
-            [PSCustomObject]@{ Name = $name; IP = $ip; SettingsXml = ''; SettingsSummary = 'default'; SettingsApplied = '' })
+            [PSCustomObject]@{ Name = $name; IP = $ip; SettingsBlob = ''; SettingsKind = ''; SettingsSummary = 'default'; SettingsApplied = '' })
         $Script:UI.NewPrinterNameBox.Text = ''
         $Script:UI.NewPrinterIPBox.Text   = ''
         $Script:UI.NewPrinterNameBox.Focus() | Out-Null
@@ -1210,11 +1292,19 @@ function Show-MainWindow {
             $Script:StagingPrinterName = $stageName
             Write-Log "Staging printer created: $stageName"
 
-            # Open the driver's printing-preferences dialog directly.
-            Start-Process -FilePath 'rundll32.exe' `
-                -ArgumentList 'printui.dll,PrintUIEntry', '/e', '/n', $stageName
+            if ($Script:UI.DevmodeCheck.IsChecked) {
+                # DEVMODE capture reads the printer's *default* (global) DevMode, so the
+                # user must set options under Printing Defaults (Properties > Advanced).
+                Start-Process -FilePath 'rundll32.exe' `
+                    -ArgumentList 'printui.dll,PrintUIEntry', '/p', '/n', $stageName
+                Write-Log 'DEVMODE mode: in Properties go to Advanced > Printing Defaults, set your vendor options (e.g. Print Job > Private/Hold), click OK, then "Capture to selected queue".'
+            } else {
+                # PrintTicket capture reads the user print ticket the preferences dialog sets.
+                Start-Process -FilePath 'rundll32.exe' `
+                    -ArgumentList 'printui.dll,PrintUIEntry', '/e', '/n', $stageName
+                Write-Log 'Set your defaults in the dialog, click OK, then click "Capture to selected queue".'
+            }
             $Script:UI.CaptureSettingsBtn.IsEnabled = $true
-            Write-Log 'Set your defaults in the dialog, click OK, then click "Capture to selected queue".'
         } catch {
             Write-Log "ERROR: Could not create staging printer - $($_.Exception.Message)"
             Write-Log 'If this is an access error, run the app as Administrator.'
@@ -1231,12 +1321,18 @@ function Show-MainWindow {
         if ($null -eq $sel) { Write-Log 'ERROR: Select the queue to apply these settings to.'; return }
 
         try {
-            $ticket = Get-StagingPrintTicket -PrinterName $Script:StagingPrinterName
-            $sel.SettingsXml     = $ticket.Xml
-            $sel.SettingsSummary = $ticket.Summary
+            if ($Script:UI.DevmodeCheck.IsChecked) {
+                $cap = Get-StagingDevmode -PrinterName $Script:StagingPrinterName
+                $sel.SettingsKind = 'devmode'
+            } else {
+                $cap = Get-StagingPrintTicket -PrinterName $Script:StagingPrinterName
+                $sel.SettingsKind = 'printticket'
+            }
+            $sel.SettingsBlob    = $cap.Blob
+            $sel.SettingsSummary = $cap.Summary
             $sel.SettingsApplied = '✓'
             $Script:UI.QueueListView.Items.Refresh()
-            Write-Log "Captured settings for '$($sel.Name)': $($ticket.Summary)"
+            Write-Log "Captured settings for '$($sel.Name)': $($cap.Summary)"
         } catch {
             Write-Log "ERROR: Could not read staging printer settings - $($_.Exception.Message)"
             return

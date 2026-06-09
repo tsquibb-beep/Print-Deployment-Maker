@@ -50,7 +50,7 @@ A portable WPF PowerShell tool that generates Intune printer deployment packages
 Print Deployment Maker\
 ├── Start.cmd                  ← double-click launcher
 ├── Start.ps1                  ← entry point; reads version.txt, calls Show-MainWindow
-├── version.txt                ← SemVer single source of truth (currently 0.2.0)
+├── version.txt                ← SemVer single source of truth (currently 0.3.0)
 ├── IntuneWinAppUtil.exe       ← gitignored; must be present to use packaging buttons
 ├── NJK-Printer\               ← gitignored reference deployment; NEVER modify
 ├── Packages\                  ← gitignored runtime output
@@ -94,7 +94,7 @@ Driver files are copied to `C:\ProgramData\AutoPilotConfig\Printers\<DriverFolde
 Dark red `ResetBtn` in the header bar (right of `ThemeBtn`). On click: shows `MessageBox` OK/Cancel warning, then clears all form fields, driver model list, queue list, and the four `$Script:Inf*` state variables. `InfPathBox.Foreground` is restored via `$Script:UI.Window.Resources['BrushTextFaint']` so it respects the active theme.
 
 ### Script-scope state
-`$Script:InfPath`, `$Script:InfSourceDir`, `$Script:DriverFolderName`, `$Script:InfFileName`, `$Script:ScriptRoot`, `$Script:UI` (control hashtable), `$Script:IsDarkMode`
+`$Script:InfPath`, `$Script:InfSourceDir`, `$Script:DriverFolderName`, `$Script:InfFileName`, `$Script:ScriptRoot`, `$Script:StagingPrinterName`, `$Script:UI` (control hashtable), `$Script:IsDarkMode`
 
 ### Critical: ScriptRoot must be passed as a parameter
 `$PSScriptRoot` inside `MainWindow.ps1` resolves to `src\UI\`, not the project root. **Always** pass it from `Start.ps1`:
@@ -111,7 +111,7 @@ $Script:ScriptRoot = if ([string]::IsNullOrWhiteSpace($ScriptRoot)) {
 Output folders (`Packages\`) and `IntuneWinAppUtil.exe` are located relative to `$Script:ScriptRoot`.
 
 ### ListView queue items use PSCustomObject
-Queue items are stored as `[PSCustomObject]@{ Name = $name; IP = $ip }` — **not** `ListViewItem`. Using `ListViewItem` directly breaks `DisplayMemberBinding` because WPF treats it as its own container and the DataContext is not set. The XAML columns use `GridViewColumn.CellTemplate` / `DataTemplate` / `{Binding Name}` with explicit `Foreground="{DynamicResource BrushTextBody}"`. All PowerShell code reads `.Name` / `.IP`, never `.Content` / `.Tag`.
+Queue items are stored as `[PSCustomObject]@{ Name = $name; IP = $ip; SettingsBlob; SettingsKind; SettingsSummary; SettingsApplied }` — **not** `ListViewItem`. Using `ListViewItem` directly breaks `DisplayMemberBinding` because WPF treats it as its own container and the DataContext is not set. The XAML columns use `GridViewColumn.CellTemplate` / `DataTemplate` / `{Binding Name}` with explicit `Foreground="{DynamicResource BrushTextBody}"`. All PowerShell code reads `.Name` / `.IP`, never `.Content` / `.Tag`.
 
 ### Layout
 Outer Grid (3 rows): header (Auto) | main area (*) | collapsible log (Auto).
@@ -121,29 +121,48 @@ Log pane starts **collapsed** — user clicks `▸ Log` to expand.
 Header right column is a `StackPanel` containing `ResetBtn` then `ThemeBtn`.
 
 ### Per-queue print settings (staging printer)
-Each queue can carry captured driver defaults (duplex, color/mono, paper, etc.).
-Flow: pick the driver → **Install staging printer & open settings** creates a
-throwaway local queue `PDM-Staging-<DriverFolder>` on the built-in `FILE:` port
-(installing the driver locally via `pnputil /add-driver /install` + `Add-PrinterDriver`
-first if needed) and opens its driver dialog with
-`rundll32 printui.dll,PrintUIEntry /e /n <name>`. The user sets defaults, then
-**Capture to selected queue** reads the queue's `UserPrintTicket` via .NET
-`System.Printing` (`Get-StagingPrintTicket`) as PrintTicket XML, stamps `SettingsXml`
-+ `SettingsSummary` onto the selected queue's PSCustomObject, and auto-removes the
-staging printer (`Remove-StagingPrinter`).
+Each queue can carry captured driver defaults (duplex, color/mono, paper, and —
+with DEVMODE capture — vendor job modes). Flow: pick the driver → **Install staging
+printer & open settings** creates a throwaway local queue `PDM-Staging-<DriverFolder>`
+on the built-in `FILE:` port (installing the driver locally first if needed via the
+same **`prndrvr.vbs -a`** method the generated `deploy.ps1` uses — *not* pnputil/
+Add-PrinterDriver, which fails to register the model by name). It opens the driver
+dialog, the user sets defaults, then **Capture to selected queue** reads the settings,
+stamps the selected queue's PSCustomObject, and auto-removes the staging printer
+(`Remove-StagingPrinter`). Per-queue settings are independent — capture only mutates
+the *selected* item; `Export-QueueSettingsFiles` writes one `queueN` file per item.
 
-The staging printer's name/IP are irrelevant — a PrintTicket is driver-schema only,
-so it transfers to any same-driver queue. **Staging needs the app run elevated**
-(install/remove printer + pnputil); package generation does not.
+The staging printer's name/IP are irrelevant — settings are driver-keyed, not
+name/IP-keyed. **Staging needs the app run elevated** (install/remove printer,
+prndrvr, registry read); package generation does not.
 
-At package time, `Export-QueueSettingsFiles` writes each queue's XML to
-`settings\queueN.xml` (UTF-8 **no BOM**, so `Set-PrintConfiguration` doesn't choke on
-a BOM) and stamps a transient `.SettingsFile` relative path. `ConvertTo-PrinterArrayBlock`
-emits `SettingsFile` into the deploy `$Printers` block. The Full and Queue-Only
-`deploy.ps1` templates, after `Add-Printer`, run
-`Set-PrintConfiguration -PrinterName $p.Name -PrintTicketXml (Get-Content ... -Raw)`
-when a settings file is present. The XML lives in separate files — never inline in
-`deploy.ps1` — so the deploy script stays plain ASCII (encoding rule).
+**Two capture methods (the `DevmodeCheck` checkbox picks which):**
+- **PrintTicket (default, unticked):** standardized Print Schema settings (duplex,
+  color, paper, collate, finishing). Stage opens **Printing Preferences** (`/e`);
+  capture reads `UserPrintTicket` → XML; target applies via `Set-PrintConfiguration
+  -PrintTicketXml`. Portable across same-driver machines.
+- **DEVMODE (ticked — "vendor-specific"):** the full driver DEVMODE, including the
+  driver-private region that holds vendor job modes (Toshiba Private/Hold/Scheduled
+  print, account codes) the PrintTicket omits. Stage opens **printer Properties**
+  (`/p`) because DEVMODE capture reads the printer's *global* default, so the user
+  must set options under **Advanced → Printing Defaults**. Capture reads the
+  `Default DevMode` REG_BINARY from
+  `HKLM\SYSTEM\CurrentControlSet\Control\Print\Printers\<name>` (silent/instant —
+  `printui.dll /Ss` pops a dialog and hangs on some drivers, so it is NOT used).
+  Target writes the bytes back to that same value and restarts the spooler once.
+  Less portable: target must run the **same driver version**.
+
+Each queue PSCustomObject carries `SettingsBlob` (PrintTicket XML *or* base64 DEVMODE),
+`SettingsKind` (`''`/`printticket`/`devmode`), `SettingsSummary`, and `SettingsApplied`
+(✓). At package time, `Export-QueueSettingsFiles` writes each queue's data to
+`settings\queueN.xml` (UTF-8 **no BOM**, so `Set-PrintConfiguration` doesn't choke on a
+BOM) or `settings\queueN.dat` (raw DEVMODE bytes), and stamps a transient `.SettingsFile`.
+`ConvertTo-PrinterArrayBlock` emits `SettingsFile` + `SettingsKind` into the deploy
+`$Printers` block. The Full and Queue-Only `deploy.ps1` templates, after `Add-Printer`,
+branch on `SettingsKind`: PrintTicket → `Set-PrintConfiguration`; DEVMODE → registry
+write + deferred `Restart-Service Spooler` (guarded by a `$restartSpooler` flag, once
+per run). Settings data lives in separate files — never inline in `deploy.ps1` — so the
+deploy script stays plain ASCII (encoding rule).
 
 ### Generated detect.ps1 — printer detection pattern
 The printer detect template uses an explicit `foreach` loop with a `$missingPrinters = @()` accumulator, matching the proven NJK-Printer reference deployment. Do **not** rewrite it as a `Where-Object` pipeline — `$null.Count` behaviour is unreliable across Intune's execution contexts. The template lives in `New-PrinterDetectScript` and produces `Write-Host` output for Intune log visibility.
@@ -155,10 +174,13 @@ All string literals written into generated `deploy.ps1` / `detect.ps1` content m
 
 ## Current Status
 
-**v0.2.0**
-- Per-queue print settings: install a local staging printer from the selected driver,
-  set defaults in the driver dialog, capture them per queue, and apply on target via
-  `Set-PrintConfiguration` after `Add-Printer` (PrintTicket XML in `settings\queueN.xml`)
+**v0.3.0**
+- Per-queue print settings via a local staging printer, two capture methods:
+  - PrintTicket (default) → `Set-PrintConfiguration` on target (`settings\queueN.xml`)
+  - DEVMODE (vendor-specific checkbox) → `Default DevMode` registry write + spooler
+    restart on target (`settings\queueN.dat`); carries Toshiba Private/Hold/Scheduled
+    print and other driver-private job modes
+- "Set" column (✓) marks queues that have captured settings
 - WPF UI with 4 action buttons across themed tabs
 - INF driver model parser (ListBox, scrollable)
 - Full / driver-only / queue-only script generators

@@ -1,14 +1,42 @@
 # Session Handover — Print Deployment Maker
 
 **Date:** 2026-06-09
-**Version at handover:** 0.2.0
+**Version at handover:** 0.3.0
 **Repo:** git@github.com:tsquibb-beep/Print-Deployment-Maker.git
 
 ---
 
-## What Changed This Session (v0.1.3 → v0.2.0)
+## What Changed This Session (v0.1.3 → v0.3.0)
 
-**Per-queue print settings capture (duplex, color/mono, paper, etc.).**
+### v0.3.0 — DEVMODE capture option (vendor-specific settings)
+
+A `DevmodeCheck` checkbox (with tooltip + faint hint) selects the capture method:
+- **Unticked = PrintTicket** (standard: duplex/color/paper). Stage opens `/e`
+  Preferences; target applies via `Set-PrintConfiguration`.
+- **Ticked = DEVMODE** (vendor: Toshiba Private/Hold/Scheduled print, account codes).
+  Stage opens `/p` Properties (set under **Advanced → Printing Defaults**, which is
+  the *global* default the DEVMODE method reads). Capture reads the `Default DevMode`
+  REG_BINARY from `HKLM\...\Print\Printers\<name>` (silent — **`printui.dll /Ss`
+  hangs on a hidden dialog for some drivers, confirmed during testing, so it is not
+  used**). Target writes the bytes back to that value and restarts the spooler once
+  (guarded by `$restartSpooler`).
+
+Queue items now carry `SettingsBlob` (XML *or* base64 DEVMODE) + `SettingsKind`.
+`Export-QueueSettingsFiles` writes `settings\queueN.xml` or `.dat`;
+`ConvertTo-PrinterArrayBlock` emits `SettingsKind`; deploy templates branch on it.
+
+Verified end-to-end against a **real Toshiba DEVMODE** (11,400 bytes): capture →
+base64 → `queue1.dat` round-trips exactly; generated `deploy.ps1` contains the
+registry write + spooler restart and stays pure ASCII. Per-queue settings are
+independent (distinct files, capture only mutates the selected row).
+
+⚠️ **Not yet verified on a real target device:** that writing `Default DevMode` +
+spooler restart actually applies the vendor setting on deployment, and that the
+specific Toshiba job mode (e.g. Private Print) persists. Needs a real Intune test.
+If it doesn't hold, the supported alternative is the Win32 `SetPrinter` API
+(no direct cmdlet) instead of the registry write.
+
+### v0.2.0 — Per-queue print settings capture (duplex, color/mono, paper, etc.).
 
 Workflow: pick the driver → **Install staging printer & open settings** → set defaults
 in the driver dialog → select a queue → **Capture to selected queue**. The captured
