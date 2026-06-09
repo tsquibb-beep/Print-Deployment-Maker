@@ -399,7 +399,7 @@ $Script:MainXaml = @'
                             <ListView x:Name="QueueListView" Grid.Row="4">
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header="Printer Name" Width="270">
+                                        <GridViewColumn Header="Printer Name" Width="240">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding Name}"
@@ -407,7 +407,7 @@ $Script:MainXaml = @'
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
-                                        <GridViewColumn Header="IP Address" Width="135">
+                                        <GridViewColumn Header="IP Address" Width="130">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding IP}"
@@ -415,7 +415,17 @@ $Script:MainXaml = @'
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
-                                        <GridViewColumn Header="Settings" Width="130">
+                                        <GridViewColumn Header="Set" Width="36">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SettingsApplied}"
+                                                               HorizontalAlignment="Center"
+                                                               FontWeight="Bold"
+                                                               Foreground="#1B8A3A"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Settings" Width="125">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding SettingsSummary}"
@@ -771,7 +781,14 @@ function Remove-StagingPrinter {
 # -PrintTicketXml applies the same ticket as the queue default.
 function Get-StagingPrintTicket {
     param([string]$PrinterName)
-    Add-Type -AssemblyName ReachFramework -ErrorAction Stop
+    # System.Printing.LocalPrintServer/PrintQueue live in System.Printing.dll
+    # (which depends on PresentationCore + ReachFramework). Load all three.
+    foreach ($asm in 'PresentationCore', 'ReachFramework', 'System.Printing') {
+        try { Add-Type -AssemblyName $asm -ErrorAction Stop } catch {}
+    }
+    if (-not ('System.Printing.LocalPrintServer' -as [type])) {
+        throw 'System.Printing assembly could not be loaded.'
+    }
     $server = New-Object System.Printing.LocalPrintServer
     try {
         $queue = $server.GetPrintQueue($PrinterName)
@@ -781,7 +798,8 @@ function Get-StagingPrintTicket {
         $ms = New-Object System.IO.MemoryStream
         $ticket.SaveTo($ms)
         $xml = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
-        $ms.Dispose()
+        $xml = $xml.TrimStart([char]0xFEFF)   # SaveTo emits a BOM; strip it so the
+        $ms.Dispose()                          # XML string is clean for the target
 
         $parts = @()
         if ($null -ne $ticket.Duplexing) {
@@ -1147,7 +1165,7 @@ function Show-MainWindow {
             if ($item.Name -ieq $name) { Write-Log "ERROR: A queue named '$name' already exists."; return }
         }
         [void]$Script:UI.QueueListView.Items.Add(
-            [PSCustomObject]@{ Name = $name; IP = $ip; SettingsXml = ''; SettingsSummary = 'default' })
+            [PSCustomObject]@{ Name = $name; IP = $ip; SettingsXml = ''; SettingsSummary = 'default'; SettingsApplied = '' })
         $Script:UI.NewPrinterNameBox.Text = ''
         $Script:UI.NewPrinterIPBox.Text   = ''
         $Script:UI.NewPrinterNameBox.Focus() | Out-Null
@@ -1216,6 +1234,7 @@ function Show-MainWindow {
             $ticket = Get-StagingPrintTicket -PrinterName $Script:StagingPrinterName
             $sel.SettingsXml     = $ticket.Xml
             $sel.SettingsSummary = $ticket.Summary
+            $sel.SettingsApplied = '✓'
             $Script:UI.QueueListView.Items.Refresh()
             Write-Log "Captured settings for '$($sel.Name)': $($ticket.Summary)"
         } catch {
