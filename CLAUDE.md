@@ -150,7 +150,9 @@ prndrvr, registry read); package generation does not.
   `HKLM\SYSTEM\CurrentControlSet\Control\Print\Printers\<name>` (silent/instant —
   `printui.dll /Ss` pops a dialog and hangs on some drivers, so it is NOT used).
   Target writes the bytes back to that same value and restarts the spooler once.
-  Less portable: target must run the **same driver version**.
+  Less portable: target must run the **same driver version**. **Field-verified** on a
+  real Toshiba Intune deployment — the registry-write + spooler-restart approach does
+  apply vendor job modes on target devices (no need for the Win32 `SetPrinter` API).
 
 Each queue PSCustomObject carries `SettingsBlob` (PrintTicket XML *or* base64 DEVMODE),
 `SettingsKind` (`''`/`printticket`/`devmode`), `SettingsSummary`, and `SettingsApplied`

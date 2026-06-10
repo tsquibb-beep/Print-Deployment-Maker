@@ -1,135 +1,117 @@
 # Session Handover — Print Deployment Maker
 
-**Date:** 2026-06-09
-**Version at handover:** 0.3.0
-**Repo:** git@github.com:tsquibb-beep/Print-Deployment-Maker.git
+**Date:** 2026-06-10
+**Version:** 0.3.0
+**Repo:** git@github.com:tsquibb-beep/Print-Deployment-Maker.git (SSH)
+**Working tree:** clean, all pushed.
 
 ---
 
-## What Changed This Session (v0.1.3 → v0.3.0)
+## Starting prompt for next session
 
-### v0.3.0 — DEVMODE capture option (vendor-specific settings)
-
-A `DevmodeCheck` checkbox (with tooltip + faint hint) selects the capture method:
-- **Unticked = PrintTicket** (standard: duplex/color/paper). Stage opens `/e`
-  Preferences; target applies via `Set-PrintConfiguration`.
-- **Ticked = DEVMODE** (vendor: Toshiba Private/Hold/Scheduled print, account codes).
-  Stage opens `/p` Properties (set under **Advanced → Printing Defaults**, which is
-  the *global* default the DEVMODE method reads). Capture reads the `Default DevMode`
-  REG_BINARY from `HKLM\...\Print\Printers\<name>` (silent — **`printui.dll /Ss`
-  hangs on a hidden dialog for some drivers, confirmed during testing, so it is not
-  used**). Target writes the bytes back to that value and restarts the spooler once
-  (guarded by `$restartSpooler`).
-
-Queue items now carry `SettingsBlob` (XML *or* base64 DEVMODE) + `SettingsKind`.
-`Export-QueueSettingsFiles` writes `settings\queueN.xml` or `.dat`;
-`ConvertTo-PrinterArrayBlock` emits `SettingsKind`; deploy templates branch on it.
-
-Verified end-to-end against a **real Toshiba DEVMODE** (11,400 bytes): capture →
-base64 → `queue1.dat` round-trips exactly; generated `deploy.ps1` contains the
-registry write + spooler restart and stays pure ASCII. Per-queue settings are
-independent (distinct files, capture only mutates the selected row).
-
-⚠️ **Not yet verified on a real target device:** that writing `Default DevMode` +
-spooler restart actually applies the vendor setting on deployment, and that the
-specific Toshiba job mode (e.g. Private Print) persists. Needs a real Intune test.
-If it doesn't hold, the supported alternative is the Win32 `SetPrinter` API
-(no direct cmdlet) instead of the registry write.
-
-### v0.2.0 — Per-queue print settings capture (duplex, color/mono, paper, etc.).
-
-Workflow: pick the driver → **Install staging printer & open settings** → set defaults
-in the driver dialog → select a queue → **Capture to selected queue**. The captured
-PrintTicket travels into the package and is applied on the target after `Add-Printer`.
-
-- New UI: two buttons in the Print Queues group (`StageSettingsBtn`,
-  `CaptureSettingsBtn` — capture starts disabled), plus a "Settings" column on
-  `QueueListView` bound to `SettingsSummary`.
-- Queue PSCustomObjects now carry `SettingsXml` + `SettingsSummary` (default
-  `'default'`).
-- `StageSettingsBtn`: installs the driver locally if missing
-  (`pnputil /add-driver /install` + `Add-PrinterDriver`), creates
-  `PDM-Staging-<DriverFolder>` on the `FILE:` port, opens
-  `rundll32 printui.dll,PrintUIEntry /e /n <name>`.
-- `CaptureSettingsBtn`: `Get-StagingPrintTicket` reads the queue's `UserPrintTicket`
-  via .NET `System.Printing` (`ReachFramework`), stamps the selected queue, then
-  `Remove-StagingPrinter` auto-deletes the staging queue.
-- `Export-QueueSettingsFiles` writes `settings\queueN.xml` (UTF-8 **no BOM**);
-  `ConvertTo-PrinterArrayBlock` emits `SettingsFile`; Full + Queue-Only `deploy.ps1`
-  templates apply it via `Set-PrintConfiguration -PrintTicketXml`.
-- `deployment-info.txt` shows `[2-sided, Mono]`-style summaries per queue.
-- Validated: PS parser clean + XAML loads with all controls found (parse-only;
-  not yet run live on Windows).
-
-### ⚠️ Still needs a real Windows smoke test (couldn't run from WSL)
-1. Run elevated; confirm staging printer installs, `/e` dialog opens, capture reads
-   the chosen duplex/color and the staging printer auto-removes.
-2. Confirm `Set-PrintConfiguration -PrintTicketXml` accepts the `UserPrintTicket`
-   XML on a target (PrintTicket schema → print-config). If it rejects it, the
-   fallback is to capture/apply via `Get/Set-PrintConfiguration`'s own
-   `PrintTicketXml` round-trip instead.
-3. Confirm the no-settings path is unchanged.
+> I want to keep working on my Print Deployment Maker project (in the Projects
+> directory). Read CLAUDE.md and HANDOVER.md in the project folder first, then we'll
+> pick up from the suggested next steps. The app is at v0.3.0 and fully working —
+> per-queue print settings (PrintTicket + DEVMODE capture) are field-verified on a
+> real Toshiba Intune deployment.
 
 ---
 
-## What Was Built (Sessions 1–2, up to v0.1.1)
+## Where the project stands
 
-A portable WPF PowerShell app (`Start.cmd` → `Start.ps1` → `src\UI\MainWindow.ps1`) that generates Intune printer deployment packages from a GUI. The user browses a driver `.inf`, picks a model, names the deployment, adds print queues, and hits one of four action buttons. Output lands in `Packages\<name>\` as `deploy.ps1`, `detect.ps1`, and `deployment-info.txt`, optionally packaged to `.intunewin` via IntuneWinAppUtil.exe.
+Portable WPF PowerShell tool (`Start.cmd` → `Start.ps1` → `src\UI\MainWindow.ps1`,
+single file) that generates Intune printer deployment packages. Browse a driver
+`.inf`, pick a model, name the deployment, add print queues, optionally capture
+per-queue driver defaults, then click one of four action buttons to produce
+`deploy.ps1` / `detect.ps1` / `deployment-info.txt`, optionally packaged to
+`.intunewin`.
 
----
+**v0.3.0 is the current, working state. Everything below is verified working,
+including on real deployments:**
+- 4 action buttons (Create / Create+Package / Driver Only / Queue Only)
+- INF model parser, dark/light theme, collapsible log, Reset button
+- **Per-queue print settings** via a throwaway local "staging printer":
+  - **PrintTicket** capture (default) — duplex, color, paper, etc.
+  - **DEVMODE** capture (checkbox) — full driver DEVMODE incl. Toshiba
+    Private/Hold/Scheduled print, applied on target via `Default DevMode` registry
+    write + spooler restart. **Field-verified on a real Toshiba deployment.**
+  - "Set" column shows ✓ for queues with captured settings; per-queue independent.
 
-## What Changed in This Session (v0.1.2 → v0.1.3)
-
-### v0.1.2 — Deployment bug fixes (both found via real-world Intune testing)
-
-| Fix | Detail |
-|---|---|
-| deploy.ps1 parse failure on target devices | Em dash (`—`) in `Write-Warning` strings inside the generated script template was written as UTF-8 but read as Windows-1252 on target devices, producing `â€"` and a PowerShell parse error. Replaced with plain hyphen (`-`). Both occurrences were in `New-FullDeployScript` and `New-QueueOnlyDeployScript` templates. |
-| detect.ps1 always returning "not detected" | Generated detect script used `Where-Object` pipeline with `$missing.Count -eq 0`. `$null.Count` is unreliable across Intune execution contexts. Rewrote `New-PrinterDetectScript` to use explicit `foreach` + `$missingPrinters = @()` accumulator, matching the proven NJK-Printer reference deployment. Also added `Write-Host` output for Intune log visibility. |
-
-### v0.1.3 — Reset button
-
-| Change | Detail |
-|---|---|
-| Reset button added | Dark red `ResetBtn` in header bar, right of the theme toggle. Positioned in the header (furthest point from the action buttons at the bottom) to prevent accidental clicks. Shows `MessageBox` OK/Cancel warning before clearing anything. Clears: `DeploymentNameBox`, `InfPathBox` (restores placeholder text + `BrushTextFaint` foreground), `DriverModelList`, `QueueListView`, `NewPrinterNameBox`, `NewPrinterIPBox`, `ManualDriverBox`, and all four `$Script:Inf*` state variables. |
-
----
-
-## Known Gotchas (for future sessions)
-
-- **ScriptRoot** — `$PSScriptRoot` inside `MainWindow.ps1` is `src\UI\`, not the project root. It is passed as `-ScriptRoot $PSScriptRoot` from `Start.ps1`. Never read `$PSScriptRoot` directly inside `MainWindow.ps1` for output paths.
-- **Dark mode TextBoxes** — require the custom `ControlTemplate` on the implicit `TextBox` style (inner `Border` uses `TemplateBinding Background`). Removing it makes text invisible in dark mode.
-- **ListView items** — must be `PSCustomObject` with `.Name` / `.IP`. Using `ListViewItem` with `.Content` / `.Tag` makes cells blank.
-- **Generated script encoding** — all string literals inside here-string templates must be plain ASCII. Any Unicode character (em dash, curly quote, etc.) will cause a parse failure on target devices running PowerShell in ANSI mode.
-- **detect.ps1 pattern** — keep `New-PrinterDetectScript` as a `foreach` loop with `$missingPrinters = @()`. Do not refactor to a `Where-Object` pipeline; `$null.Count` is not reliable in all Intune contexts.
-- **Reset button foreground restore** — uses `$Script:UI.Window.Resources['BrushTextFaint']` (not a hardcoded colour) so it respects the active theme.
-- **Git SSH** — remote is SSH (`git@github.com:tsquibb-beep/Print-Deployment-Maker.git`) with `core.sshCommand = /mnt/c/Windows/System32/OpenSSH/ssh.exe`. HTTPS push does not work in WSL without a credential helper.
-- **IntuneWinAppUtil.exe** — gitignored; must be copied into the project root manually before packaging buttons work.
+See CLAUDE.md → "Per-queue print settings (staging printer)" for the full mechanism,
+data model (`SettingsBlob`/`SettingsKind`), and gotchas.
 
 ---
 
-## Suggested Next Steps
+## How to develop & verify (important — testing from WSL)
 
-These are ideas — Tom hasn't requested any of these yet:
-
-1. **Re-test deployments** — Regenerate the two OPS deployments that failed (v0.1.1 packages are broken — both the em dash parse error and the detect false-negative). The fixed templates are in v0.1.2+.
-2. **End-to-end smoke test** — Run `Start.cmd`, browse `NJK-Printer\ToshibaUni\eSf6u.inf`, pick a model, add a queue, click each button, verify `deployment-info.txt` content and no `__PLACEHOLDER__` tokens in generated scripts.
-3. **Validation polish** — No inline field-level hints; errors only appear in the log. Could add red border on empty required fields before allowing a create action.
-4. **Queue editing** — No way to edit an existing queue entry; user must remove and re-add. A double-click-to-edit flow could help.
-5. **Uninstall removes port** — Generated uninstall only removes the printer, not the TCP port (`Remove-PrinterPort`). Could be worth adding.
-6. **Logo** — Header shows a "PDM" text placeholder in a blue rounded square. A real 96×96 PNG could replace it — swap the `<Border>` for an `<Image Source="...">`.
-7. **Window min-size / DPI** — Test at 125% and 150% DPI scaling to confirm tab strip and buttons are always visible without scrolling.
+The repo lives on a Windows path but Claude runs in WSL. The app itself runs on
+Windows. Useful patterns proven this session:
+- **Parse-check** a change without running the UI:
+  `powershell.exe -Command "[System.Management.Automation.Language.Parser]::ParseFile(<win path>, [ref]$null, [ref]$e)"`
+- **XAML load check**: dot-source `MainWindow.ps1`, then `XamlReader.Load` on
+  `$Script:MainXaml` and `FindName` the new controls.
+- **Headless logic tests**: dot-source the file and call functions directly
+  (`Get-StagingDevmode`, `Export-QueueSettingsFiles`, `ConvertTo-PrinterArrayBlock`,
+  `New-FullDeployScript`) — you can build a real `System.Windows.Controls.ListView`
+  in memory and add PSCustomObjects to it.
+- **Both shells work**: Windows PowerShell 5.1 and pwsh 7.x both load WPF +
+  `System.Printing`. `Start.cmd` prefers pwsh.
+- **Staging needs elevation** (install/remove printer, prndrvr, registry read).
+- Don't run `printui.dll /Ss` to read settings — it hangs on a hidden dialog for
+  some drivers. Read the `Default DevMode` registry value instead.
 
 ---
 
-## File Map (quick reference)
+## Known gotchas (carried forward)
+
+- **ScriptRoot** — pass `-ScriptRoot $PSScriptRoot` from `Start.ps1`; never read
+  `$PSScriptRoot` directly in `MainWindow.ps1` for output paths.
+- **Generated-script encoding** — all literals inside `deploy.ps1`/`detect.ps1`
+  here-strings must be plain ASCII. Settings data is written to separate
+  `settings\queueN.xml`/`.dat` files (XML as UTF-8 **no BOM**) so the deploy script
+  stays ASCII.
+- **detect.ps1** — keep the `foreach` + `$missingPrinters = @()` accumulator; don't
+  refactor to a `Where-Object`/`$null.Count` pipeline.
+- **Dark-mode TextBoxes** need the custom `ControlTemplate`.
+- **ListView items** must be `PSCustomObject`; mutating a property needs
+  `QueueListView.Items.Refresh()` to show (not an ObservableCollection).
+- **Local driver install for staging** uses `prndrvr.vbs -a` (the proven method),
+  NOT `pnputil` + `Add-PrinterDriver` (which fails to register the model by name).
+- **`System.Printing`** is the correct assembly for `LocalPrintServer`/`PrintQueue`
+  (not `ReachFramework`); `PrintTicket.SaveTo` emits a BOM that must be stripped.
+- **DEVMODE capture** must be set under **Printing Defaults** (global), not
+  Preferences (per-user) — that's why the DEVMODE path opens `/p`, not `/e`.
+- **Git** — SSH remote; `core.sshCommand = /mnt/c/Windows/System32/OpenSSH/ssh.exe`.
+  Commit + push after every meaningful change; bump `version.txt` each session.
+- **IntuneWinAppUtil.exe** — gitignored; must be present in project root for
+  packaging buttons.
+
+---
+
+## Suggested next steps (none requested yet)
+
+1. **Queue editing** — double-click a queue row to edit Name/IP (currently
+   remove + re-add).
+2. **Validation polish** — red border / inline hint on empty required fields before
+   a create action (errors currently only appear in the log).
+3. **Uninstall removes the TCP port** — generated uninstall removes the printer but
+   not the port (`Remove-PrinterPort`).
+4. **Settings preview / clear** — a way to view a captured ticket's key values and a
+   button to clear a queue's captured settings without removing the queue.
+5. **DPI / min-size** — test at 125% and 150% scaling; confirm tab strip + buttons
+   stay visible.
+6. **Real logo** — replace the "PDM" text placeholder `<Border>` with a 96×96 PNG.
+7. **Multiple drivers per package** — currently one driver per deployment.
+
+---
+
+## File map
 
 | File | Purpose |
 |---|---|
-| `Start.cmd` | Double-click launcher; prefers pwsh.exe |
-| `Start.ps1` | Reads `version.txt`, calls `Show-MainWindow -ScriptRoot $PSScriptRoot` |
-| `version.txt` | SemVer — currently `0.1.3` |
-| `src\UI\MainWindow.ps1` | Everything: XAML, styles, logic, event handlers |
+| `Start.cmd` / `Start.ps1` | Launcher; reads `version.txt`, calls `Show-MainWindow -ScriptRoot $PSScriptRoot` |
+| `version.txt` | SemVer — currently `0.3.0` |
+| `src\UI\MainWindow.ps1` | Everything: XAML, styles, logic, event handlers, script generators |
 | `NJK-Printer\` | Reference deployment (gitignored, never modify) |
 | `Packages\` | Runtime output (gitignored) |
 | `IntuneWinAppUtil.exe` | Packaging tool (gitignored, must be present manually) |
