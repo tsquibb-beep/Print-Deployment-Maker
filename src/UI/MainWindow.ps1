@@ -705,6 +705,45 @@ function Write-Log {
     })
 }
 
+# Force the collapsible log pane open (used when reporting an error).
+function Show-LogPane {
+    $Script:UI.LogScrollViewer.Visibility = [System.Windows.Visibility]::Visible
+    $Script:UI.LogToggleBtn.Content       = '▾  Log'
+}
+
+# Log a caught exception in full (message + location + stack) and reveal the log pane.
+# Wrapping every action handler in try/catch + this keeps an error from tearing the
+# whole WPF app down instantly, and gives the user something to copy/paste.
+function Write-HandlerError {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord, [string]$Context)
+    Write-Log "ERROR during $Context :"
+    Write-Log "  $($ErrorRecord.Exception.Message)"
+    if ($ErrorRecord.InvocationInfo -and $ErrorRecord.InvocationInfo.PositionMessage) {
+        Write-Log ("  " + ($ErrorRecord.InvocationInfo.PositionMessage -replace "`r?`n", "`n  "))
+    }
+    if ($ErrorRecord.ScriptStackTrace) {
+        Write-Log "  Stack:"
+        Write-Log ("    " + ($ErrorRecord.ScriptStackTrace -replace "`r?`n", "`n    "))
+    }
+    Show-LogPane
+}
+
+# Copy the driver .inf tree into the package, unless the source already *is* the
+# destination (happens when a deployment is reopened with the same name: the driver
+# files are already in the package folder). Copying a directory into itself throws.
+function Copy-DriverFiles {
+    param([string]$SourceDir, [string]$DestDir)
+    $srcFull = [System.IO.Path]::GetFullPath($SourceDir).TrimEnd('\')
+    $dstFull = [System.IO.Path]::GetFullPath($DestDir).TrimEnd('\')
+    if ($srcFull -ieq $dstFull) {
+        Write-Log "Driver files already in place (reopened deployment) - skipping copy."
+        return
+    }
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $SourceDir '*') -Destination $DestDir -Recurse -Force
+    Write-Log "Driver files copied."
+}
+
 # ── INF parser ────────────────────────────────────────────────────────────────
 
 function Parse-InfDriverModels {
@@ -1453,10 +1492,12 @@ function Show-MainWindow {
     & $refreshReopen
     $Script:UI.ReopenCombo.Add_DropDownOpened($refreshReopen)
     $Script:UI.ReopenBtn.Add_Click({
+      try {
         $name = $Script:UI.ReopenCombo.SelectedItem
         if (-not $name) { Write-Log 'Select a deployment to reopen from the list.'; return }
         $folder = Join-Path (Join-Path $Script:ScriptRoot 'Packages') $name
         Import-Deployment -PackageFolder $folder
+      } catch { Write-HandlerError $_ 'Reopen deployment' }
     })
 
     # ── Browse .inf ──
@@ -1607,6 +1648,7 @@ function Show-MainWindow {
 
     # ── Create Only ──
     $Script:UI.CreateBtn.Add_Click({
+      try {
         $Script:UI.LogBox.Clear()
         if (-not (Test-ForFullOrDriverOnly)) { return }
         if (-not (Test-ForQueuesPresent))    { return }
@@ -1620,9 +1662,7 @@ function Show-MainWindow {
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
         Write-Log "Creating deployment: $deployName (v$version)"
-        New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
-        Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
-        Write-Log "Driver files copied."
+        Copy-DriverFiles -SourceDir $Script:InfSourceDir -DestDir $driverDest
         Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
         $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb -DeploymentKey $markerKey -Version $version
@@ -1638,10 +1678,12 @@ function Show-MainWindow {
         Write-Log "Scripts written."
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+      } catch { Write-HandlerError $_ 'Create Only' }
     })
 
     # ── Create and Package ──
     $Script:UI.CreatePackageBtn.Add_Click({
+      try {
         $Script:UI.LogBox.Clear()
         if (-not (Test-ForFullOrDriverOnly)) { return }
         if (-not (Test-ForQueuesPresent))    { return }
@@ -1655,9 +1697,7 @@ function Show-MainWindow {
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
         Write-Log "Creating deployment: $deployName (v$version)"
-        New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
-        Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
-        Write-Log "Driver files copied."
+        Copy-DriverFiles -SourceDir $Script:InfSourceDir -DestDir $driverDest
         Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
         $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb -DeploymentKey $markerKey -Version $version
@@ -1674,10 +1714,12 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+      } catch { Write-HandlerError $_ 'Create and Package' }
     })
 
     # ── Package Driver Only ──
     $Script:UI.DriverOnlyBtn.Add_Click({
+      try {
         $Script:UI.LogBox.Clear()
         if (-not (Test-ForFullOrDriverOnly)) { return }
 
@@ -1690,9 +1732,7 @@ function Show-MainWindow {
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
         Write-Log "Creating driver-only deployment: $deployName-Driver (v$version)"
-        New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
-        Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
-        Write-Log "Driver files copied."
+        Copy-DriverFiles -SourceDir $Script:InfSourceDir -DestDir $driverDest
         $deploy = New-DriverOnlyDeployScript -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -DeploymentKey $markerKey -Version $version
         $detect = New-DriverDetectScript     -DriverName $driverName -DeploymentKey $markerKey -Version $version
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
@@ -1707,10 +1747,12 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+      } catch { Write-HandlerError $_ 'Package Driver Only' }
     })
 
     # ── Package Print Queue Only ──
     $Script:UI.QueueOnlyBtn.Add_Click({
+      try {
         $Script:UI.LogBox.Clear()
         if (-not (Test-ForQueueOnly)) { return }
 
@@ -1739,6 +1781,7 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+      } catch { Write-HandlerError $_ 'Package Print Queue Only' }
     })
 
     # ── Reset ──

@@ -201,7 +201,21 @@ files were copied into `<pkg>\<DriverFolderName>`, reopen points `$Script:InfSou
 at that copied folder and re-parses the copied `.inf` for the model list. Captured queue
 settings are read back from `settings\queueN.xml/.dat` into `SettingsBlob` so a re-create
 regenerates identical settings files. The matching action tab is selected from the
-manifest `Type`. (Note: WPF default ComboBox styling in dark mode is a minor known
+manifest `Type`.
+
+**Reopen + same-name re-create gotcha:** after reopen, `$Script:InfSourceDir` points at
+the driver folder *inside* the package, so re-creating with the same name would copy a
+directory into itself (which throws and — before guarding — instantly killed the app).
+`Copy-DriverFiles` compares the resolved source/dest paths and skips the copy when they
+are the same (files are already in place). If the name was changed on reopen, the copy
+runs normally (old package → new package folder).
+
+### Error handling in action handlers
+Every action handler (the 4 create/package buttons + Reopen) wraps its body in
+`try/catch` → `Write-HandlerError`, which logs the exception message, position, and
+script stack to the log pane and force-opens it (`Show-LogPane`). This stops an
+unhandled exception in a WPF click handler from tearing the whole app down silently, and
+gives the user something to copy out. Keep this pattern when adding new handlers. (Note: WPF default ComboBox styling in dark mode is a minor known
 cosmetic risk; selection colours are covered by the SystemColors overrides.)
 
 ### Generated detect.ps1 — printer detection pattern
