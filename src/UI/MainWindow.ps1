@@ -316,10 +316,30 @@ $Script:MainXaml = @'
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="4"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="10"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="4"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Text="Deployment Name" FontSize="11"
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="90"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Deployment Name" FontSize="11"
                                        Foreground="{DynamicResource BrushTextMuted}"/>
-                            <TextBox x:Name="DeploymentNameBox" Grid.Row="2"/>
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Version" FontSize="11"
+                                       Foreground="{DynamicResource BrushTextMuted}"/>
+                            <TextBox x:Name="DeploymentNameBox"    Grid.Row="2" Grid.Column="0"/>
+                            <TextBox x:Name="DeploymentVersionBox" Grid.Row="2" Grid.Column="2" Text="1"/>
+
+                            <TextBlock Grid.Row="4" Grid.ColumnSpan="3"
+                                       Text="Reopen existing deployment" FontSize="11"
+                                       Foreground="{DynamicResource BrushTextMuted}"/>
+                            <ComboBox x:Name="ReopenCombo" Grid.Row="6" Grid.Column="0"/>
+                            <Button   x:Name="ReopenBtn"   Grid.Row="6" Grid.Column="2"
+                                      Content="Load" Padding="10,4"/>
                         </Grid>
                     </GroupBox>
 
@@ -478,7 +498,7 @@ $Script:MainXaml = @'
             </ScrollViewer><!-- end shared form -->
 
             <!-- ── Action tab strip (always visible at bottom of main area) ── -->
-            <TabControl Grid.Row="1" Margin="12,0,12,8" MinHeight="160"
+            <TabControl x:Name="ActionTabs" Grid.Row="1" Margin="12,0,12,8" MinHeight="160"
                         Background="{DynamicResource BrushPanelBg}">
 
                 <!-- Tab 1: Create and Package -->
@@ -761,10 +781,20 @@ function Test-DeploymentName {
     return $true
 }
 
+function Test-DeploymentVersion {
+    $v = $Script:UI.DeploymentVersionBox.Text.Trim()
+    $n = 0
+    if (-not [int]::TryParse($v, [ref]$n) -or $n -lt 1) {
+        Write-Log 'ERROR: Version must be a whole number 1 or greater.'; return $false
+    }
+    return $true
+}
+
 function Test-ForFullOrDriverOnly {
     if (-not $Script:InfPath) { Write-Log 'ERROR: Browse for a .inf file first.'; return $false }
     if ($null -eq $Script:UI.DriverModelList.SelectedItem) { Write-Log 'ERROR: Select a driver model from the list.'; return $false }
     if (-not (Test-DeploymentName $Script:UI.DeploymentNameBox.Text.Trim())) { return $false }
+    if (-not (Test-DeploymentVersion)) { return $false }
     return $true
 }
 
@@ -778,6 +808,7 @@ function Test-ForQueueOnly {
         Write-Log 'ERROR: Manual Driver Name is required for Print Queue Only.'; return $false
     }
     if (-not (Test-DeploymentName $Script:UI.DeploymentNameBox.Text.Trim())) { return $false }
+    if (-not (Test-DeploymentVersion)) { return $false }
     if (-not (Test-ForQueuesPresent)) { return $false }
     return $true
 }
@@ -927,13 +958,17 @@ function ConvertTo-NamesBlock {
 }
 
 function New-FullDeployScript {
-    param([string]$DriverName, [string]$DriverFolder, [string]$InfFileName, [string]$PrintersBlock)
+    param([string]$DriverName, [string]$DriverFolder, [string]$InfFileName, [string]$PrintersBlock,
+          [string]$DeploymentKey, [string]$Version)
     $template = @'
 param([string]$Action = 'Install')
 
 $DriverName      = '__DRIVER_NAME__'
 $DriverFolder    = '__DRIVER_FOLDER__'
 $InfFileName     = '__INF_FILE__'
+$DeploymentKey   = '__DEPLOY_KEY__'
+$DeploymentVer   = '__VERSION__'
+$VersionDir      = 'C:\ProgramData\AutoPilotConfig\PrintDeployments'
 $DriverStorePath = "C:\ProgramData\AutoPilotConfig\Printers\$DriverFolder"
 $Printers = @(
 __PRINTERS_BLOCK__
@@ -976,27 +1011,36 @@ if ($Action -eq 'Install') {
     if ($restartSpooler) {
         Restart-Service -Name Spooler -Force -ErrorAction SilentlyContinue
     }
+    New-Item -ItemType Directory -Path $VersionDir -Force | Out-Null
+    Set-Content -Path "$VersionDir\$DeploymentKey.txt" -Value $DeploymentVer -Encoding ASCII
 } elseif ($Action -eq 'Uninstall') {
     foreach ($p in $Printers) {
         Get-Printer -Name $p.Name -ErrorAction SilentlyContinue | Remove-Printer
     }
+    Remove-Item "$VersionDir\$DeploymentKey.txt" -Force -ErrorAction SilentlyContinue
 }
 '@
     return $template `
         -replace '__DRIVER_NAME__',    ($DriverName   -replace "'","''") `
         -replace '__DRIVER_FOLDER__',  ($DriverFolder -replace "'","''") `
         -replace '__INF_FILE__',       ($InfFileName  -replace "'","''") `
+        -replace '__DEPLOY_KEY__',     ($DeploymentKey -replace "'","''") `
+        -replace '__VERSION__',        ($Version      -replace "'","''") `
         -replace '__PRINTERS_BLOCK__', $PrintersBlock
 }
 
 function New-DriverOnlyDeployScript {
-    param([string]$DriverName, [string]$DriverFolder, [string]$InfFileName)
+    param([string]$DriverName, [string]$DriverFolder, [string]$InfFileName,
+          [string]$DeploymentKey, [string]$Version)
     $template = @'
 param([string]$Action = 'Install')
 
 $DriverName      = '__DRIVER_NAME__'
 $DriverFolder    = '__DRIVER_FOLDER__'
 $InfFileName     = '__INF_FILE__'
+$DeploymentKey   = '__DEPLOY_KEY__'
+$DeploymentVer   = '__VERSION__'
+$VersionDir      = 'C:\ProgramData\AutoPilotConfig\PrintDeployments'
 $DriverStorePath = "C:\ProgramData\AutoPilotConfig\Printers\$DriverFolder"
 
 if ($Action -eq 'Install') {
@@ -1005,22 +1049,30 @@ if ($Action -eq 'Install') {
     Copy-Item -Path "$PSScriptRoot\$DriverFolder\*" -Destination $DriverStorePath -Recurse -Force
     & cscript 'C:\Windows\System32\Printing_Admin_Scripts\en-US\prndrvr.vbs' `
         -a -m $DriverName -h "$DriverStorePath\" -i "$DriverStorePath\$InfFileName"
+    New-Item -ItemType Directory -Path $VersionDir -Force | Out-Null
+    Set-Content -Path "$VersionDir\$DeploymentKey.txt" -Value $DeploymentVer -Encoding ASCII
 } elseif ($Action -eq 'Uninstall') {
     & cscript 'C:\Windows\System32\Printing_Admin_Scripts\en-US\prndrvr.vbs' -d -m $DriverName
+    Remove-Item "$VersionDir\$DeploymentKey.txt" -Force -ErrorAction SilentlyContinue
 }
 '@
     return $template `
         -replace '__DRIVER_NAME__',   ($DriverName   -replace "'","''") `
         -replace '__DRIVER_FOLDER__', ($DriverFolder -replace "'","''") `
-        -replace '__INF_FILE__',      ($InfFileName  -replace "'","''")
+        -replace '__INF_FILE__',      ($InfFileName  -replace "'","''") `
+        -replace '__DEPLOY_KEY__',    ($DeploymentKey -replace "'","''") `
+        -replace '__VERSION__',       ($Version      -replace "'","''")
 }
 
 function New-QueueOnlyDeployScript {
-    param([string]$DriverName, [string]$PrintersBlock)
+    param([string]$DriverName, [string]$PrintersBlock, [string]$DeploymentKey, [string]$Version)
     $template = @'
 param([string]$Action = 'Install')
 
-$DriverName = '__DRIVER_NAME__'
+$DriverName    = '__DRIVER_NAME__'
+$DeploymentKey = '__DEPLOY_KEY__'
+$DeploymentVer = '__VERSION__'
+$VersionDir    = 'C:\ProgramData\AutoPilotConfig\PrintDeployments'
 $Printers = @(
 __PRINTERS_BLOCK__
 )
@@ -1057,19 +1109,24 @@ if ($Action -eq 'Install') {
     if ($restartSpooler) {
         Restart-Service -Name Spooler -Force -ErrorAction SilentlyContinue
     }
+    New-Item -ItemType Directory -Path $VersionDir -Force | Out-Null
+    Set-Content -Path "$VersionDir\$DeploymentKey.txt" -Value $DeploymentVer -Encoding ASCII
 } elseif ($Action -eq 'Uninstall') {
     foreach ($p in $Printers) {
         Get-Printer -Name $p.Name -ErrorAction SilentlyContinue | Remove-Printer
     }
+    Remove-Item "$VersionDir\$DeploymentKey.txt" -Force -ErrorAction SilentlyContinue
 }
 '@
     return $template `
         -replace '__DRIVER_NAME__',    ($DriverName -replace "'","''") `
+        -replace '__DEPLOY_KEY__',     ($DeploymentKey -replace "'","''") `
+        -replace '__VERSION__',        ($Version    -replace "'","''") `
         -replace '__PRINTERS_BLOCK__', $PrintersBlock
 }
 
 function New-PrinterDetectScript {
-    param([string]$NamesBlock)
+    param([string]$NamesBlock, [string]$DeploymentKey, [string]$Version)
     $template = @'
 $printerNames = @(__NAMES_BLOCK__)
 $missingPrinters = @()
@@ -1082,24 +1139,53 @@ foreach ($printerName in $printerNames) {
     }
 }
 
-if ($missingPrinters.Count -eq 0) {
-    Write-Host "All printers found."
+$versionFile = 'C:\ProgramData\AutoPilotConfig\PrintDeployments\__DEPLOY_KEY__.txt'
+$expectedVersion = __VERSION__
+$versionOk = $false
+if (Test-Path $versionFile) {
+    $current = 0
+    if ([int]::TryParse((Get-Content $versionFile -Raw).Trim(), [ref]$current)) {
+        if ($current -ge $expectedVersion) { $versionOk = $true }
+        Write-Host "Installed version: $current (need >= $expectedVersion)."
+    }
+} else {
+    Write-Host "Version marker not found (need >= $expectedVersion)."
+}
+
+if ($missingPrinters.Count -eq 0 -and $versionOk) {
+    Write-Host "All printers found and version is current."
     Exit 0
 } else {
-    Write-Host "Some printers are missing: $($missingPrinters -join ', ')"
+    if ($missingPrinters.Count -gt 0) { Write-Host "Some printers are missing: $($missingPrinters -join ', ')" }
+    if (-not $versionOk) { Write-Host "Version is missing or older than $expectedVersion." }
     Exit 1
 }
 '@
-    return $template -replace '__NAMES_BLOCK__', $NamesBlock
+    return $template `
+        -replace '__NAMES_BLOCK__',  $NamesBlock `
+        -replace '__DEPLOY_KEY__',   ($DeploymentKey -replace "'","''") `
+        -replace '__VERSION__',      ($Version -replace "'","''")
 }
 
 function New-DriverDetectScript {
-    param([string]$DriverName)
+    param([string]$DriverName, [string]$DeploymentKey, [string]$Version)
     $template = @'
 $driverName = '__DRIVER_NAME__'
-if (Get-PrinterDriver -Name $driverName -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }
+$versionFile = 'C:\ProgramData\AutoPilotConfig\PrintDeployments\__DEPLOY_KEY__.txt'
+$expectedVersion = __VERSION__
+$versionOk = $false
+if (Test-Path $versionFile) {
+    $current = 0
+    if ([int]::TryParse((Get-Content $versionFile -Raw).Trim(), [ref]$current)) {
+        if ($current -ge $expectedVersion) { $versionOk = $true }
+    }
+}
+if ((Get-PrinterDriver -Name $driverName -ErrorAction SilentlyContinue) -and $versionOk) { exit 0 } else { exit 1 }
 '@
-    return $template -replace '__DRIVER_NAME__', ($DriverName -replace "'","''")
+    return $template `
+        -replace '__DRIVER_NAME__',  ($DriverName -replace "'","''") `
+        -replace '__DEPLOY_KEY__',   ($DeploymentKey -replace "'","''") `
+        -replace '__VERSION__',      ($Version -replace "'","''")
 }
 
 function Invoke-Package {
@@ -1124,11 +1210,13 @@ function Write-DeploymentInstructions {
         [string]$DeploymentName,
         [string]$DeploymentType,
         [string]$DriverName,
-        [System.Windows.Controls.ListView]$QueueListView
+        [System.Windows.Controls.ListView]$QueueListView,
+        [string]$Version = '1'
     )
     $lines = @(
         "Deployment : $DeploymentName",
         "Type       : $DeploymentType",
+        "Version    : $Version",
         "Generated  : $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
         "Driver     : $DriverName",
         ''
@@ -1146,9 +1234,150 @@ function Write-DeploymentInstructions {
     $lines += @(
         'Intune Commands',
         '  Install  : powershell.exe -ExecutionPolicy Bypass -File ".\deploy.ps1" -Action Install',
-        '  Uninstall: powershell.exe -ExecutionPolicy Bypass -File ".\deploy.ps1" -Action Uninstall'
+        '  Uninstall: powershell.exe -ExecutionPolicy Bypass -File ".\deploy.ps1" -Action Uninstall',
+        '',
+        'Detection : printer/driver present AND on-target version marker >= this version.',
+        '  Marker  : C:\ProgramData\AutoPilotConfig\PrintDeployments\<deployment>.txt'
     )
     Set-Content -Path (Join-Path $OutFolder 'deployment-info.txt') -Value $lines -Encoding UTF8
+}
+
+# ── Deployment manifest (machine-readable; powers Reopen/Edit) ─────────────────
+# Written into every package folder as deployment.json. Captures all form state
+# needed to repopulate the UI later. Call AFTER Export-QueueSettingsFiles so each
+# queue carries its transient .SettingsFile (relative path to settings\queueN.*).
+function Write-DeploymentManifest {
+    param(
+        [string]$OutFolder,
+        [string]$Name,
+        [string]$Version,
+        [string]$Type,                 # Full | DriverOnly | QueueOnly
+        [string]$DriverModel,
+        [string]$DriverFolderName,
+        [string]$InfFileName,
+        [string]$ManualDriverName,
+        [System.Windows.Controls.ListView]$QueueListView
+    )
+    $queues = @()
+    if ($null -ne $QueueListView) {
+        foreach ($item in $QueueListView.Items) {
+            $sf = ''
+            if ($item.PSObject.Properties['SettingsFile']) { $sf = [string]$item.SettingsFile }
+            $queues += [PSCustomObject]@{
+                Name            = [string]$item.Name
+                IP              = [string]$item.IP
+                SettingsKind    = [string]$item.SettingsKind
+                SettingsSummary = [string]$item.SettingsSummary
+                SettingsFile    = $sf
+            }
+        }
+    }
+    $manifest = [PSCustomObject]@{
+        Name             = $Name
+        Version          = $Version
+        Type             = $Type
+        DriverModel      = $DriverModel
+        DriverFolderName = $DriverFolderName
+        InfFileName      = $InfFileName
+        ManualDriverName = $ManualDriverName
+        Queues           = $queues
+    }
+    $json = $manifest | ConvertTo-Json -Depth 6
+    Set-Content -Path (Join-Path $OutFolder 'deployment.json') -Value $json -Encoding UTF8
+}
+
+# List Packages\ subfolders that contain a deployment.json (reopen candidates).
+function Get-ReopenableDeployments {
+    $pkgRoot = Join-Path $Script:ScriptRoot 'Packages'
+    if (-not (Test-Path $pkgRoot)) { return @() }
+    return @(Get-ChildItem -Path $pkgRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName 'deployment.json') } |
+        Select-Object -ExpandProperty Name | Sort-Object)
+}
+
+# Repopulate the whole form from a package's deployment.json. Version is auto-bumped
+# by +1 (you reopen to amend + redeploy). Driver files live inside the package, so we
+# point InfSourceDir at the copied folder and re-parse the copied .inf for the model list.
+function Import-Deployment {
+    param([string]$PackageFolder)
+    $manifestPath = Join-Path $PackageFolder 'deployment.json'
+    if (-not (Test-Path $manifestPath)) {
+        Write-Log "ERROR: No deployment.json in '$PackageFolder'."; return
+    }
+    try {
+        $m = Get-Content -Path $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        Write-Log "ERROR: Could not read deployment.json - $($_.Exception.Message)"; return
+    }
+
+    $Script:UI.DeploymentNameBox.Text = [string]$m.Name
+    $nextVer = 1
+    [int]::TryParse([string]$m.Version, [ref]$nextVer) | Out-Null
+    $Script:UI.DeploymentVersionBox.Text = ($nextVer + 1).ToString()
+
+    # Reset driver/inf state; restore per type.
+    $Script:InfPath = ''; $Script:InfSourceDir = ''; $Script:DriverFolderName = ''; $Script:InfFileName = ''
+    $Script:UI.DriverModelList.Items.Clear()
+    $Script:UI.ManualDriverBox.Text = ''
+
+    switch ([string]$m.Type) {
+        'QueueOnly' {
+            $Script:UI.ManualDriverBox.Text = [string]$m.ManualDriverName
+            $Script:UI.ActionTabs.SelectedIndex = 3
+            $Script:UI.InfPathBox.Text       = 'No .inf file selected'
+            $Script:UI.InfPathBox.Foreground = $Script:UI.Window.Resources['BrushTextFaint']
+        }
+        default {
+            # Full or DriverOnly: driver files were copied into <pkg>\<DriverFolderName>.
+            $Script:DriverFolderName = [string]$m.DriverFolderName
+            $Script:InfFileName      = [string]$m.InfFileName
+            $Script:InfSourceDir     = Join-Path $PackageFolder $Script:DriverFolderName
+            $Script:InfPath          = Join-Path $Script:InfSourceDir $Script:InfFileName
+            if (Test-Path $Script:InfPath) {
+                $models = Parse-InfDriverModels -InfPath $Script:InfPath
+                foreach ($mod in $models) { [void]$Script:UI.DriverModelList.Items.Add($mod) }
+                $Script:UI.DriverModelList.SelectedItem = [string]$m.DriverModel
+                if ($null -eq $Script:UI.DriverModelList.SelectedItem -and $models.Count) {
+                    $Script:UI.DriverModelList.SelectedIndex = 0
+                }
+                $Script:UI.InfPathBox.Text       = $Script:InfPath
+                $Script:UI.InfPathBox.Foreground = $Script:UI.Window.Resources['BrushTextBody']
+            } else {
+                Write-Log "WARNING: copied .inf not found at $Script:InfPath"
+                $Script:UI.DriverModelList.Items.Add([string]$m.DriverModel) | Out-Null
+                $Script:UI.DriverModelList.SelectedIndex = 0
+            }
+            $Script:UI.ActionTabs.SelectedIndex = if ([string]$m.Type -eq 'DriverOnly') { 2 } else { 0 }
+        }
+    }
+
+    # Rebuild queue list, reading captured settings files back into SettingsBlob.
+    $Script:UI.QueueListView.Items.Clear()
+    foreach ($q in @($m.Queues)) {
+        $blob = ''
+        $kind = [string]$q.SettingsKind
+        $applied = ''
+        $sf = [string]$q.SettingsFile
+        if ($sf) {
+            $full = Join-Path $PackageFolder $sf
+            if (Test-Path $full) {
+                if ($kind -eq 'devmode') {
+                    $blob = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($full))
+                } else {
+                    $blob = [System.IO.File]::ReadAllText($full)
+                }
+                $applied = [char]0x2713   # check mark
+            } else {
+                Write-Log "WARNING: settings file missing: $sf"
+            }
+        }
+        [void]$Script:UI.QueueListView.Items.Add([PSCustomObject]@{
+            Name = [string]$q.Name; IP = [string]$q.IP
+            SettingsBlob = $blob; SettingsKind = $kind
+            SettingsSummary = [string]$q.SettingsSummary; SettingsApplied = $applied })
+    }
+    $Script:UI.QueueListView.Items.Refresh()
+    Write-Log "Reopened '$($m.Name)' (was v$($m.Version), now editing as v$($nextVer + 1))."
 }
 
 function Write-IntuneCmdHint {
@@ -1186,6 +1415,10 @@ function Show-MainWindow {
         DriverModelList  = $window.FindName('DriverModelList')
         ManualDriverBox  = $window.FindName('ManualDriverBox')
         DeploymentNameBox= $window.FindName('DeploymentNameBox')
+        DeploymentVersionBox = $window.FindName('DeploymentVersionBox')
+        ReopenCombo      = $window.FindName('ReopenCombo')
+        ReopenBtn        = $window.FindName('ReopenBtn')
+        ActionTabs       = $window.FindName('ActionTabs')
         NewPrinterNameBox= $window.FindName('NewPrinterNameBox')
         NewPrinterIPBox  = $window.FindName('NewPrinterIPBox')
         AddQueueBtn      = $window.FindName('AddQueueBtn')
@@ -1206,6 +1439,22 @@ function Show-MainWindow {
     if ($AppVersion) { $Script:UI.VersionText.Text = "v$AppVersion" }
 
     Set-Theme -Dark $false
+
+    # ── Reopen existing deployment ──
+    $refreshReopen = {
+        $sel = $Script:UI.ReopenCombo.SelectedItem
+        $Script:UI.ReopenCombo.Items.Clear()
+        foreach ($name in (Get-ReopenableDeployments)) { [void]$Script:UI.ReopenCombo.Items.Add($name) }
+        if ($sel -and $Script:UI.ReopenCombo.Items.Contains($sel)) { $Script:UI.ReopenCombo.SelectedItem = $sel }
+    }
+    & $refreshReopen
+    $Script:UI.ReopenCombo.Add_DropDownOpened($refreshReopen)
+    $Script:UI.ReopenBtn.Add_Click({
+        $name = $Script:UI.ReopenCombo.SelectedItem
+        if (-not $name) { Write-Log 'Select a deployment to reopen from the list.'; return }
+        $folder = Join-Path (Join-Path $Script:ScriptRoot 'Packages') $name
+        Import-Deployment -PackageFolder $folder
+    })
 
     # ── Browse .inf ──
     $Script:UI.BrowseInfBtn.Add_Click({
@@ -1360,24 +1609,29 @@ function Show-MainWindow {
         if (-not (Test-ForQueuesPresent))    { return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
+        $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
         $driverName = $Script:UI.DriverModelList.SelectedItem.ToString()
         $outFolder  = Join-Path $Script:ScriptRoot "Packages\$deployName"
+        $markerKey  = $deployName
         $driverDest = Join-Path $outFolder $Script:DriverFolderName
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
-        Write-Log "Creating deployment: $deployName"
+        Write-Log "Creating deployment: $deployName (v$version)"
         New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
         Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
         Write-Log "Driver files copied."
         Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
-        $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb
-        $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
+        $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb -DeploymentKey $markerKey -Version $version
+        $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView) -DeploymentKey $markerKey -Version $version
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
         Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName $deployName `
-            -DeploymentType 'Full (driver + print queues)' `
+            -DeploymentType 'Full (driver + print queues)' -Version $version `
             -DriverName $driverName -QueueListView $Script:UI.QueueListView
+        Write-DeploymentManifest -OutFolder $outFolder -Name $deployName -Version $version `
+            -Type 'Full' -DriverModel $driverName -DriverFolderName $Script:DriverFolderName `
+            -InfFileName $Script:InfFileName -ManualDriverName '' -QueueListView $Script:UI.QueueListView
         Write-Log "Scripts written."
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
@@ -1390,24 +1644,29 @@ function Show-MainWindow {
         if (-not (Test-ForQueuesPresent))    { return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
+        $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
         $driverName = $Script:UI.DriverModelList.SelectedItem.ToString()
         $outFolder  = Join-Path $Script:ScriptRoot "Packages\$deployName"
+        $markerKey  = $deployName
         $driverDest = Join-Path $outFolder $Script:DriverFolderName
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
-        Write-Log "Creating deployment: $deployName"
+        Write-Log "Creating deployment: $deployName (v$version)"
         New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
         Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
         Write-Log "Driver files copied."
         Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
-        $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb
-        $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
+        $deploy = New-FullDeployScript   -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -PrintersBlock $pb -DeploymentKey $markerKey -Version $version
+        $detect = New-PrinterDetectScript -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView) -DeploymentKey $markerKey -Version $version
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
         Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName $deployName `
-            -DeploymentType 'Full (driver + print queues)' `
+            -DeploymentType 'Full (driver + print queues)' -Version $version `
             -DriverName $driverName -QueueListView $Script:UI.QueueListView
+        Write-DeploymentManifest -OutFolder $outFolder -Name $deployName -Version $version `
+            -Type 'Full' -DriverModel $driverName -DriverFolderName $Script:DriverFolderName `
+            -InfFileName $Script:InfFileName -ManualDriverName '' -QueueListView $Script:UI.QueueListView
         Write-Log "Scripts written."
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
@@ -1420,22 +1679,27 @@ function Show-MainWindow {
         if (-not (Test-ForFullOrDriverOnly)) { return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
+        $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
         $driverName = $Script:UI.DriverModelList.SelectedItem.ToString()
         $outFolder  = Join-Path $Script:ScriptRoot "Packages\$deployName-Driver"
+        $markerKey  = "$deployName-Driver"
         $driverDest = Join-Path $outFolder $Script:DriverFolderName
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
-        Write-Log "Creating driver-only deployment: $deployName-Driver"
+        Write-Log "Creating driver-only deployment: $deployName-Driver (v$version)"
         New-Item -ItemType Directory -Path $driverDest -Force | Out-Null
         Copy-Item -Path (Join-Path $Script:InfSourceDir '*') -Destination $driverDest -Recurse -Force
         Write-Log "Driver files copied."
-        $deploy = New-DriverOnlyDeployScript -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName
-        $detect = New-DriverDetectScript     -DriverName $driverName
+        $deploy = New-DriverOnlyDeployScript -DriverName $driverName -DriverFolder $Script:DriverFolderName -InfFileName $Script:InfFileName -DeploymentKey $markerKey -Version $version
+        $detect = New-DriverDetectScript     -DriverName $driverName -DeploymentKey $markerKey -Version $version
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
         Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName "$deployName-Driver" `
-            -DeploymentType 'Driver only' `
+            -DeploymentType 'Driver only' -Version $version `
             -DriverName $driverName -QueueListView $null
+        Write-DeploymentManifest -OutFolder $outFolder -Name $deployName -Version $version `
+            -Type 'DriverOnly' -DriverModel $driverName -DriverFolderName $Script:DriverFolderName `
+            -InfFileName $Script:InfFileName -ManualDriverName '' -QueueListView $null
         Write-Log "Scripts written."
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
@@ -1448,21 +1712,26 @@ function Show-MainWindow {
         if (-not (Test-ForQueueOnly)) { return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
+        $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
         $driverName = $Script:UI.ManualDriverBox.Text.Trim()
         $outFolder  = Join-Path $Script:ScriptRoot "Packages\$deployName-QueueOnly"
+        $markerKey  = "$deployName-QueueOnly"
 
         if (Test-Path $outFolder) { Write-Log "WARNING: Output folder exists — contents will be overwritten." }
-        Write-Log "Creating print-queue-only deployment: $deployName-QueueOnly"
+        Write-Log "Creating print-queue-only deployment: $deployName-QueueOnly (v$version)"
         New-Item -ItemType Directory -Path $outFolder -Force | Out-Null
         Export-QueueSettingsFiles -OutFolder $outFolder -ListView $Script:UI.QueueListView
         $pb     = ConvertTo-PrinterArrayBlock $Script:UI.QueueListView
-        $deploy = New-QueueOnlyDeployScript   -DriverName $driverName -PrintersBlock $pb
-        $detect = New-PrinterDetectScript     -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView)
+        $deploy = New-QueueOnlyDeployScript   -DriverName $driverName -PrintersBlock $pb -DeploymentKey $markerKey -Version $version
+        $detect = New-PrinterDetectScript     -NamesBlock (ConvertTo-NamesBlock $Script:UI.QueueListView) -DeploymentKey $markerKey -Version $version
         Set-Content -Path (Join-Path $outFolder 'deploy.ps1') -Value $deploy -Encoding UTF8
         Set-Content -Path (Join-Path $outFolder 'detect.ps1') -Value $detect -Encoding UTF8
         Write-DeploymentInstructions -OutFolder $outFolder -DeploymentName "$deployName-QueueOnly" `
-            -DeploymentType 'Print queues only' `
+            -DeploymentType 'Print queues only' -Version $version `
             -DriverName $driverName -QueueListView $Script:UI.QueueListView
+        Write-DeploymentManifest -OutFolder $outFolder -Name $deployName -Version $version `
+            -Type 'QueueOnly' -DriverModel '' -DriverFolderName '' `
+            -InfFileName '' -ManualDriverName $driverName -QueueListView $Script:UI.QueueListView
         Write-Log "Scripts written."
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
@@ -1483,7 +1752,8 @@ function Show-MainWindow {
         $Script:DriverFolderName = ''
         $Script:InfFileName      = ''
 
-        $Script:UI.DeploymentNameBox.Text  = ''
+        $Script:UI.DeploymentNameBox.Text     = ''
+        $Script:UI.DeploymentVersionBox.Text  = '1'
         $Script:UI.InfPathBox.Text         = 'No .inf file selected'
         $Script:UI.InfPathBox.Foreground   = $Script:UI.Window.Resources['BrushTextFaint']
         $Script:UI.DriverModelList.Items.Clear()

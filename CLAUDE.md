@@ -50,7 +50,7 @@ A portable WPF PowerShell tool that generates Intune printer deployment packages
 Print Deployment Maker\
 ├── Start.cmd                  ← double-click launcher
 ├── Start.ps1                  ← entry point; reads version.txt, calls Show-MainWindow
-├── version.txt                ← SemVer single source of truth (currently 0.3.0)
+├── version.txt                ← SemVer single source of truth (currently 0.4.0)
 ├── IntuneWinAppUtil.exe       ← gitignored; must be present to use packaging buttons
 ├── NJK-Printer\               ← gitignored reference deployment; NEVER modify
 ├── Packages\                  ← gitignored runtime output
@@ -166,6 +166,44 @@ write + deferred `Restart-Service Spooler` (guarded by a `$restartSpooler` flag,
 per run). Settings data lives in separate files — never inline in `deploy.ps1` — so the
 deploy script stays plain ASCII (encoding rule).
 
+### Per-deployment versioning (Intune redeploy detection)
+Intune's Win32 detection rule is the only signal it uses to decide whether an app is
+already installed. Because `detect.ps1` keys off the printer/driver name, an amended
+deployment that keeps the same name would be seen as "already installed" and never
+redeployed. To force redeploys without renaming, each deployment carries an integer
+**Version** (`DeploymentVersionBox`, default `1`):
+
+- `deploy.ps1` **Install** writes the version integer to a marker file
+  `C:\ProgramData\AutoPilotConfig\PrintDeployments\<MarkerKey>.txt` (ASCII); **Uninstall**
+  deletes it.
+- **MarkerKey** is the package output-folder leaf, so types never collide:
+  Full → `<Name>`, Driver-only → `<Name>-Driver`, Queue-only → `<Name>-QueueOnly`.
+- `detect.ps1` exits 0 only when the printer(s)/driver are present **and** the on-target
+  marker parses to an integer `-ge` the packaged version (`-ge`, so a newer machine is
+  not flagged for redeploy). Bump the Version to make older-version machines redeploy.
+- The printer `detect.ps1` keeps its proven `foreach` + `$missingPrinters = @()`
+  accumulator; the version gate is an additional `$versionOk` flag AND-ed into the final
+  exit decision. Both deploy and detect stay **plain ASCII** (integers + ASCII paths only).
+
+### Reopen / edit an existing deployment
+Every package folder gets a machine-readable `deployment.json` manifest
+(`Write-DeploymentManifest`) capturing all form state: name, version, type
+(`Full`/`DriverOnly`/`QueueOnly`), driver model, driver folder name, inf file name,
+manual driver name (queue-only), and the queue list (Name/IP/SettingsKind/
+SettingsSummary/SettingsFile). It is written **after** `Export-QueueSettingsFiles` so the
+transient `.SettingsFile` paths are populated.
+
+The Deployment groupbox has a **Reopen existing deployment** ComboBox + **Load** button.
+The combo is populated from `Packages\*` folders containing a `deployment.json` (on
+startup and on `DropDownOpened`). `Import-Deployment` repopulates the whole form and
+**auto-increments the version by +1** (you reopen to amend and redeploy). Because driver
+files were copied into `<pkg>\<DriverFolderName>`, reopen points `$Script:InfSourceDir`
+at that copied folder and re-parses the copied `.inf` for the model list. Captured queue
+settings are read back from `settings\queueN.xml/.dat` into `SettingsBlob` so a re-create
+regenerates identical settings files. The matching action tab is selected from the
+manifest `Type`. (Note: WPF default ComboBox styling in dark mode is a minor known
+cosmetic risk; selection colours are covered by the SystemColors overrides.)
+
 ### Generated detect.ps1 — printer detection pattern
 The printer detect template uses an explicit `foreach` loop with a `$missingPrinters = @()` accumulator, matching the proven NJK-Printer reference deployment. Do **not** rewrite it as a `Where-Object` pipeline — `$null.Count` behaviour is unreliable across Intune's execution contexts. The template lives in `New-PrinterDetectScript` and produces `Write-Host` output for Intune log visibility.
 
@@ -175,6 +213,15 @@ All string literals written into generated `deploy.ps1` / `detect.ps1` content m
 ---
 
 ## Current Status
+
+**v0.4.0**
+- Per-deployment integer **Version** field; `deploy.ps1` writes a version marker file on
+  Install (removes on Uninstall) and `detect.ps1` requires the marker `-ge` the packaged
+  version in addition to the printer/driver check — so an amended deployment with the
+  same name redeploys via Intune when you bump the number.
+- **Reopen/edit** an existing package: every package gets a `deployment.json` manifest; a
+  ComboBox + Load button in the Deployment groupbox repopulates the whole form (driver,
+  queues, captured settings) and auto-increments the version by +1.
 
 **v0.3.0**
 - Per-queue print settings via a local staging printer, two capture methods:

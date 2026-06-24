@@ -1,7 +1,7 @@
 # Session Handover — Print Deployment Maker
 
-**Date:** 2026-06-10
-**Version:** 0.3.0
+**Date:** 2026-06-24
+**Version:** 0.4.0
 **Repo:** git@github.com:tsquibb-beep/Print-Deployment-Maker.git (SSH)
 **Working tree:** clean, all pushed.
 
@@ -11,9 +11,28 @@
 
 > I want to keep working on my Print Deployment Maker project (in the Projects
 > directory). Read CLAUDE.md and HANDOVER.md in the project folder first, then we'll
-> pick up from the suggested next steps. The app is at v0.3.0 and fully working —
-> per-queue print settings (PrintTicket + DEVMODE capture) are field-verified on a
-> real Toshiba Intune deployment.
+> pick up from the suggested next steps. The app is at v0.4.0 — per-deployment
+> versioning (marker file + version-gated detect.ps1) and reopen/edit of existing
+> packages were added this session and pass the headless tests; they have NOT yet been
+> exercised on a live Intune redeploy.
+
+---
+
+## What changed this session (v0.3.0 → v0.4.0)
+
+- **Per-deployment versioning.** New integer Version field. `deploy.ps1` Install writes
+  `C:\ProgramData\AutoPilotConfig\PrintDeployments\<MarkerKey>.txt`; Uninstall removes it.
+  `detect.ps1` now exits 0 only if printer(s)/driver present AND on-target marker
+  `-ge` packaged version. Solves Intune treating a same-name update as "already
+  installed". MarkerKey = package folder leaf (`<Name>` / `<Name>-Driver` /
+  `<Name>-QueueOnly`). See CLAUDE.md → "Per-deployment versioning".
+- **Reopen/edit existing deployment.** Every package now also gets `deployment.json`
+  (`Write-DeploymentManifest`). A ComboBox + Load button reopens one via
+  `Import-Deployment`, repopulating the form, re-parsing the copied `.inf`, reading
+  captured queue settings back, and auto-incrementing the version +1.
+- Verified headlessly (XAML load, generator string/ASCII checks, version-gate exit
+  codes, manifest round-trip). **Not yet run on a live Intune redeploy or a real
+  reopen-in-UI session** — that's the next thing to confirm.
 
 ---
 
@@ -90,6 +109,10 @@ Windows. Useful patterns proven this session:
 
 ## Suggested next steps (none requested yet)
 
+0. **Live-verify v0.4.0** — run the app on Windows: create a deployment, reopen it from
+   the dropdown (version should show +1, fields/settings restored), and confirm on a
+   real Intune redeploy that bumping the Version re-triggers install on a machine that
+   already has the printer.
 1. **Queue editing** — double-click a queue row to edit Name/IP (currently
    remove + re-add).
 2. **Validation polish** — red border / inline hint on empty required fields before
@@ -110,7 +133,7 @@ Windows. Useful patterns proven this session:
 | File | Purpose |
 |---|---|
 | `Start.cmd` / `Start.ps1` | Launcher; reads `version.txt`, calls `Show-MainWindow -ScriptRoot $PSScriptRoot` |
-| `version.txt` | SemVer — currently `0.3.0` |
+| `version.txt` | SemVer — currently `0.4.0` |
 | `src\UI\MainWindow.ps1` | Everything: XAML, styles, logic, event handlers, script generators |
 | `NJK-Printer\` | Reference deployment (gitignored, never modify) |
 | `Packages\` | Runtime output (gitignored) |
