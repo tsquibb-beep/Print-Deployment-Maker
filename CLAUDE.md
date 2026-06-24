@@ -193,9 +193,9 @@ manual driver name (queue-only), and the queue list (Name/IP/SettingsKind/
 SettingsSummary/SettingsFile). It is written **after** `Export-QueueSettingsFiles` so the
 transient `.SettingsFile` paths are populated.
 
-The Deployment groupbox has a **Reopen existing deployment** ComboBox + **Load** button.
-The combo is populated from `Packages\*` folders containing a `deployment.json` (on
-startup and on `DropDownOpened`). `Import-Deployment` repopulates the whole form and
+A **Reopen Existing Deployment** groupbox (above the Deployment name/version box) holds a
+ComboBox + **Load** button. The combo is populated from `Packages\*` folders containing a
+`deployment.json` (on startup and on `DropDownOpened`). `Import-Deployment` repopulates the whole form and
 **auto-increments the version by +1** (you reopen to amend and redeploy). Because driver
 files were copied into `<pkg>\<DriverFolderName>`, reopen points `$Script:InfSourceDir`
 at that copied folder and re-parses the copied `.inf` for the model list. Captured queue

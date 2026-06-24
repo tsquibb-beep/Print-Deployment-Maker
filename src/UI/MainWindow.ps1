@@ -309,14 +309,24 @@ $Script:MainXaml = @'
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Margin="12,10,12,4">
 
+                    <!-- Reopen existing deployment -->
+                    <GroupBox Header="Reopen Existing Deployment" Margin="0,0,0,10">
+                        <Grid Margin="4,6,4,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="ReopenCombo" Grid.Column="0" VerticalAlignment="Center"/>
+                            <Button   x:Name="ReopenBtn"   Grid.Column="2"
+                                      Content="Load" Padding="14,4"/>
+                        </Grid>
+                    </GroupBox>
+
                     <!-- Deployment -->
                     <GroupBox Header="Deployment" Margin="0,0,0,10">
                         <Grid Margin="4,6,4,4">
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="4"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="10"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="4"/>
                                 <RowDefinition Height="Auto"/>
@@ -333,13 +343,6 @@ $Script:MainXaml = @'
                                        Foreground="{DynamicResource BrushTextMuted}"/>
                             <TextBox x:Name="DeploymentNameBox"    Grid.Row="2" Grid.Column="0"/>
                             <TextBox x:Name="DeploymentVersionBox" Grid.Row="2" Grid.Column="2" Text="1"/>
-
-                            <TextBlock Grid.Row="4" Grid.ColumnSpan="3"
-                                       Text="Reopen existing deployment" FontSize="11"
-                                       Foreground="{DynamicResource BrushTextMuted}"/>
-                            <ComboBox x:Name="ReopenCombo" Grid.Row="6" Grid.Column="0"/>
-                            <Button   x:Name="ReopenBtn"   Grid.Row="6" Grid.Column="2"
-                                      Content="Load" Padding="10,4"/>
                         </Grid>
                     </GroupBox>
 
