@@ -597,16 +597,31 @@ $Script:MainXaml = @'
                 BorderBrush="{DynamicResource BrushBorder}"
                 Background="{DynamicResource BrushBarBg}">
             <StackPanel>
-                <Button x:Name="LogToggleBtn"
-                        Style="{StaticResource FlatBtn}"
-                        Background="{DynamicResource BrushBarBg}"
-                        Foreground="{DynamicResource BrushTextMuted}"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Left"
-                        BorderThickness="0"
-                        Padding="10,5"
-                        FontSize="11" FontWeight="SemiBold"
-                        Content="▸  Log"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="LogToggleBtn" Grid.Column="0"
+                            Style="{StaticResource FlatBtn}"
+                            Background="{DynamicResource BrushBarBg}"
+                            Foreground="{DynamicResource BrushTextMuted}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            BorderThickness="0"
+                            Padding="10,5"
+                            FontSize="11" FontWeight="SemiBold"
+                            Content="▸  Log"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                VerticalAlignment="Center" Margin="0,0,12,0">
+                        <Ellipse x:Name="StatusDot" Width="10" Height="10"
+                                 Fill="#888888" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="StatusText" Text="Ready"
+                                   Margin="6,0,0,0" FontSize="11" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource BrushTextMuted}"/>
+                    </StackPanel>
+                </Grid>
                 <ScrollViewer x:Name="LogScrollViewer" Height="110"
                               Visibility="Collapsed"
                               VerticalScrollBarVisibility="Auto"
@@ -705,6 +720,33 @@ function Write-Log {
     })
 }
 
+# Update the always-visible status indicator (colored dot + text) next to the log
+# toggle. State drives the colour: idle (grey) / busy (amber) / success (green) /
+# error (red). Gives a quick read on progress without expanding the log.
+function Set-Status {
+    param(
+        [string]$Text,
+        [ValidateSet('idle','busy','success','error')][string]$State = 'idle'
+    )
+    $color = switch ($State) {
+        'busy'    { '#D8A100' }
+        'success' { '#107C10' }
+        'error'   { '#C42B1C' }
+        default   { '#888888' }
+    }
+    $brush = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.ColorConverter]::ConvertFromString($color))
+    $Script:UI.StatusDot.Dispatcher.Invoke([action]{
+        $Script:UI.StatusDot.Fill        = $brush
+        $Script:UI.StatusText.Text       = $Text
+        $Script:UI.StatusText.Foreground = $brush
+    })
+    # The action handlers run synchronously on the UI thread, so a 'busy' status set
+    # before a long operation (e.g. packaging) would not paint until the handler
+    # returns. Flush the dispatcher at Render priority so the indicator updates now.
+    $Script:UI.StatusDot.Dispatcher.Invoke([action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
+}
+
 # Force the collapsible log pane open (used when reporting an error).
 function Show-LogPane {
     $Script:UI.LogScrollViewer.Visibility = [System.Windows.Visibility]::Visible
@@ -725,6 +767,7 @@ function Write-HandlerError {
         Write-Log "  Stack:"
         Write-Log ("    " + ($ErrorRecord.ScriptStackTrace -replace "`r?`n", "`n    "))
     }
+    Set-Status "Failed - see log" 'error'
     Show-LogPane
 }
 
@@ -1452,6 +1495,8 @@ function Show-MainWindow {
         LogBox           = $window.FindName('LogBox')
         LogScrollViewer  = $window.FindName('LogScrollViewer')
         LogToggleBtn     = $window.FindName('LogToggleBtn')
+        StatusDot        = $window.FindName('StatusDot')
+        StatusText       = $window.FindName('StatusText')
         InfPathBox       = $window.FindName('InfPathBox')
         BrowseInfBtn     = $window.FindName('BrowseInfBtn')
         DriverModelList  = $window.FindName('DriverModelList')
@@ -1481,6 +1526,7 @@ function Show-MainWindow {
     if ($AppVersion) { $Script:UI.VersionText.Text = "v$AppVersion" }
 
     Set-Theme -Dark $false
+    Set-Status 'Ready' 'idle'
 
     # ── Reopen existing deployment ──
     $refreshReopen = {
@@ -1497,6 +1543,7 @@ function Show-MainWindow {
         if (-not $name) { Write-Log 'Select a deployment to reopen from the list.'; return }
         $folder = Join-Path (Join-Path $Script:ScriptRoot 'Packages') $name
         Import-Deployment -PackageFolder $folder
+        Set-Status "Reopened $name" 'success'
       } catch { Write-HandlerError $_ 'Reopen deployment' }
     })
 
@@ -1515,14 +1562,17 @@ function Show-MainWindow {
         $Script:UI.InfPathBox.Text       = $Script:InfPath
         $Script:UI.InfPathBox.Foreground = $Script:UI.Window.Resources['BrushTextBody']
 
+        Set-Status 'Reading driver models...' 'busy'
         $models = Parse-InfDriverModels -InfPath $Script:InfPath
         $Script:UI.DriverModelList.Items.Clear()
         foreach ($m in $models) { [void]$Script:UI.DriverModelList.Items.Add($m) }
         if ($models.Count -gt 0) {
             $Script:UI.DriverModelList.SelectedIndex = 0
             Write-Log "Loaded $($models.Count) driver model(s) from $Script:InfFileName"
+            Set-Status "Loaded $($models.Count) driver model(s)" 'success'
         } else {
             Write-Log "WARNING: No driver models found in $Script:InfFileName"
+            Set-Status 'No driver models found - see log' 'error'
         }
     })
 
@@ -1566,6 +1616,7 @@ function Show-MainWindow {
         $stageName  = 'PDM-Staging-' + ($Script:DriverFolderName -replace '[\\/:*?"<>|]', '_')
 
         try {
+            Set-Status 'Installing staging printer...' 'busy'
             Remove-StagingPrinter   # clear any leftover from a previous attempt
 
             if (-not (Get-PrinterDriver -Name $driverName -ErrorAction SilentlyContinue)) {
@@ -1598,9 +1649,12 @@ function Show-MainWindow {
                 Write-Log 'Set your defaults in the dialog, click OK, then click "Capture to selected queue".'
             }
             $Script:UI.CaptureSettingsBtn.IsEnabled = $true
+            Set-Status 'Staging ready - set defaults, then Capture' 'busy'
         } catch {
             Write-Log "ERROR: Could not create staging printer - $($_.Exception.Message)"
             Write-Log 'If this is an access error, run the app as Administrator.'
+            Set-Status 'Staging failed - see log' 'error'
+            Show-LogPane
             Remove-StagingPrinter
         }
     })
@@ -1626,8 +1680,11 @@ function Show-MainWindow {
             $sel.SettingsApplied = '✓'
             $Script:UI.QueueListView.Items.Refresh()
             Write-Log "Captured settings for '$($sel.Name)': $($cap.Summary)"
+            Set-Status "Captured settings for $($sel.Name)" 'success'
         } catch {
             Write-Log "ERROR: Could not read staging printer settings - $($_.Exception.Message)"
+            Set-Status 'Capture failed - see log' 'error'
+            Show-LogPane
             return
         } finally {
             Remove-StagingPrinter
@@ -1650,8 +1707,9 @@ function Show-MainWindow {
     $Script:UI.CreateBtn.Add_Click({
       try {
         $Script:UI.LogBox.Clear()
-        if (-not (Test-ForFullOrDriverOnly)) { return }
-        if (-not (Test-ForQueuesPresent))    { return }
+        Set-Status 'Creating...' 'busy'
+        if (-not (Test-ForFullOrDriverOnly)) { Set-Status 'Check inputs - see log' 'error'; return }
+        if (-not (Test-ForQueuesPresent))    { Set-Status 'Check inputs - see log' 'error'; return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
         $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
@@ -1678,6 +1736,7 @@ function Show-MainWindow {
         Write-Log "Scripts written."
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+        Set-Status 'Created successfully' 'success'
       } catch { Write-HandlerError $_ 'Create Only' }
     })
 
@@ -1685,8 +1744,9 @@ function Show-MainWindow {
     $Script:UI.CreatePackageBtn.Add_Click({
       try {
         $Script:UI.LogBox.Clear()
-        if (-not (Test-ForFullOrDriverOnly)) { return }
-        if (-not (Test-ForQueuesPresent))    { return }
+        Set-Status 'Packaging...' 'busy'
+        if (-not (Test-ForFullOrDriverOnly)) { Set-Status 'Check inputs - see log' 'error'; return }
+        if (-not (Test-ForQueuesPresent))    { Set-Status 'Check inputs - see log' 'error'; return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
         $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
@@ -1714,6 +1774,7 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+        Set-Status 'Packaged successfully' 'success'
       } catch { Write-HandlerError $_ 'Create and Package' }
     })
 
@@ -1721,7 +1782,8 @@ function Show-MainWindow {
     $Script:UI.DriverOnlyBtn.Add_Click({
       try {
         $Script:UI.LogBox.Clear()
-        if (-not (Test-ForFullOrDriverOnly)) { return }
+        Set-Status 'Packaging...' 'busy'
+        if (-not (Test-ForFullOrDriverOnly)) { Set-Status 'Check inputs - see log' 'error'; return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
         $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
@@ -1747,6 +1809,7 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+        Set-Status 'Packaged successfully' 'success'
       } catch { Write-HandlerError $_ 'Package Driver Only' }
     })
 
@@ -1754,7 +1817,8 @@ function Show-MainWindow {
     $Script:UI.QueueOnlyBtn.Add_Click({
       try {
         $Script:UI.LogBox.Clear()
-        if (-not (Test-ForQueueOnly)) { return }
+        Set-Status 'Packaging...' 'busy'
+        if (-not (Test-ForQueueOnly)) { Set-Status 'Check inputs - see log' 'error'; return }
 
         $deployName = $Script:UI.DeploymentNameBox.Text.Trim()
         $version    = $Script:UI.DeploymentVersionBox.Text.Trim()
@@ -1781,6 +1845,7 @@ function Show-MainWindow {
         Invoke-Package -PackageFolder $outFolder | Out-Null
         Write-Log "Output: $outFolder"
         Write-IntuneCmdHint
+        Set-Status 'Packaged successfully' 'success'
       } catch { Write-HandlerError $_ 'Package Print Queue Only' }
     })
 
@@ -1810,6 +1875,7 @@ function Show-MainWindow {
         Remove-StagingPrinter
         $Script:UI.CaptureSettingsBtn.IsEnabled = $false
         Write-Log "Form reset."
+        Set-Status 'Ready' 'idle'
     })
 
     # ── Theme toggle ──

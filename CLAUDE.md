@@ -50,7 +50,7 @@ A portable WPF PowerShell tool that generates Intune printer deployment packages
 Print Deployment Maker\
 ├── Start.cmd                  ← double-click launcher
 ├── Start.ps1                  ← entry point; reads version.txt, calls Show-MainWindow
-├── version.txt                ← SemVer single source of truth (currently 0.4.0)
+├── version.txt                ← SemVer single source of truth (currently 0.4.1)
 ├── IntuneWinAppUtil.exe       ← gitignored; must be present to use packaging buttons
 ├── NJK-Printer\               ← gitignored reference deployment; NEVER modify
 ├── Packages\                  ← gitignored runtime output
@@ -210,6 +210,16 @@ directory into itself (which throws and — before guarding — instantly killed
 are the same (files are already in place). If the name was changed on reopen, the copy
 runs normally (old package → new package folder).
 
+### Status bar
+An always-visible status indicator (a colour-coded `Ellipse` `StatusDot` + `StatusText`)
+sits on the same row as the `▸ Log` toggle at the bottom, so progress is readable whether
+or not the log is expanded. `Set-Status -Text -State` drives it: `idle` (grey) / `busy`
+(amber) / `success` (green) / `error` (red). Handlers set `busy` on entry, `success` at
+the end, and `Write-HandlerError` sets `error`. **Crucial:** the action handlers run
+synchronously on the UI thread, so a `busy` status set before a long operation (packaging)
+would not paint until the handler returns — `Set-Status` therefore flushes the dispatcher
+at `Render` priority after updating so the indicator repaints immediately.
+
 ### Error handling in action handlers
 Every action handler (the 4 create/package buttons + Reopen) wraps its body in
 `try/catch` → `Write-HandlerError`, which logs the exception message, position, and
@@ -227,6 +237,17 @@ All string literals written into generated `deploy.ps1` / `detect.ps1` content m
 ---
 
 ## Current Status
+
+**v0.4.1**
+- **Status bar** (colour-coded dot + text on the log toggle row): Ready / busy /
+  success / error, visible without expanding the log.
+- All action handlers + Reopen wrapped in `try/catch` → `Write-HandlerError` (logs full
+  exception to the pane and opens it), so an unhandled error no longer silently closes
+  the app.
+- Fixed instant-close when re-creating a reopened deployment with the same name
+  (`Copy-DriverFiles` skips copying the driver folder into itself).
+- Reopen control moved to its own "Reopen Existing Deployment" groupbox above the
+  Deployment name/version box.
 
 **v0.4.0**
 - Per-deployment integer **Version** field; `deploy.ps1` writes a version marker file on
